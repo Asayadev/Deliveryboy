@@ -1,0 +1,674 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes, viewport-fit=cover">
+    <title>ShopSwift - Delivery Boy Panel | Pending Notifications Only</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-database-compat.js"></script>
+    
+    <!-- HTML5 QR Code Scanner Library -->
+    <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+    
+    <script src="https://cdn.jsdelivr.net/npm/vue@2.7.14/dist/vue.js"></script>
+
+    <style>
+        * { font-family: 'Inter', sans-serif; }
+        .toast {
+            position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%);
+            z-index: 1000; background: #1f2937; color: white; padding: 12px 24px;
+            border-radius: 50px; font-size: 13px; opacity: 0;
+            transition: opacity 0.3s; pointer-events: none; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.3);
+        }
+        .toast.show { opacity: 1; }
+        .filter-chip { cursor: pointer; transition: all 0.2s; padding: 6px 14px; font-size: 11px; border-radius: 30px; border: 1px solid #e5e7eb; white-space: nowrap; }
+        .filter-chip.active { background: #10b981; color: white; border-color: #10b981; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        .progress-bar { transition: width 0.5s ease-in-out; }
+        .scan-animation { animation: scanPulse 1s ease-in-out; }
+        @keyframes scanPulse {
+            0% { transform: scale(1); background: rgba(16, 185, 129, 0.2); }
+            50% { transform: scale(1.02); background: rgba(16, 185, 129, 0.4); }
+            100% { transform: scale(1); background: rgba(16, 185, 129, 0.2); }
+        }
+        .invoice-modal { max-height: 80vh; overflow-y: auto; }
+        .notification-bell { position: relative; cursor: pointer; }
+        .notification-badge {
+            position: absolute; top: -8px; right: -8px;
+            background: #ef4444; color: white; border-radius: 50%;
+            width: 18px; height: 18px; font-size: 10px;
+            display: flex; align-items: center; justify-content: center;
+            font-weight: bold;
+        }
+        .notification-dropdown {
+            position: absolute; top: 45px; right: 0;
+            width: 320px; max-height: 400px; overflow-y: auto;
+            background: white; border-radius: 16px;
+            box-shadow: 0 10px 25px -5px rgba(0,0,0,0.2);
+            z-index: 50;
+            border: 1px solid #e5e7eb;
+        }
+        .notification-item {
+            padding: 12px; border-bottom: 1px solid #f0f0f0;
+            transition: background 0.2s;
+            cursor: pointer;
+        }
+        .notification-item:hover { background: #f3f4f6; }
+        .notification-item.unread { background: #eff6ff; }
+        @media print {
+            .no-print { display: none; }
+            .invoice-print-area { display: block; margin: 0; padding: 0; }
+            body * { visibility: hidden; }
+            .invoice-print-area, .invoice-print-area * { visibility: visible; }
+            .invoice-print-area { position: absolute; top: 0; left: 0; width: 100%; }
+        }
+        .slide-down {
+            animation: slideDown 0.3s ease-out;
+        }
+        @keyframes slideDown {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-800 antialiased">
+
+<div id="toast" class="toast"><i class="fas fa-check-circle text-green-400 mr-2"></i> <span id="toastMsg">Status Updated!</span></div>
+
+<div id="app" class="max-w-md mx-auto min-h-screen flex flex-col bg-white shadow-xl relative">
+    
+    <header class="bg-slate-900 text-white p-4 sticky top-0 z-40 shadow flex justify-between items-center">
+        <div class="flex items-center gap-2">
+            <i class="fas fa-shipping-fast text-green-400 text-xl"></i>
+            <div>
+                <h1 class="text-base font-black tracking-wide">ShopSwift <span class="text-green-400">Rider</span></h1>
+                <p class="text-[10px] text-gray-400 font-medium">Delivery Agent Terminal</p>
+            </div>
+        </div>
+        <div class="flex items-center gap-3">
+            <!-- Notification Bell with Badge (Only Pending Order Notifications) -->
+            <div class="notification-bell relative" @click="toggleNotificationPanel">
+                <i class="fas fa-bell text-gray-300 text-lg hover:text-white transition"></i>
+                <span v-if="unreadNotificationsCount > 0" class="notification-badge">{{ unreadNotificationsCount }}</span>
+            </div>
+            <button @click="openQRScanner" class="bg-green-600 hover:bg-green-700 text-white text-[10px] font-bold px-3 py-1.5 rounded-full transition flex items-center gap-1 shadow">
+                <i class="fas fa-qrcode"></i> Scan QR
+            </button>
+            <div class="bg-slate-800 px-2.5 py-1 rounded-full text-[10px] font-bold text-green-400 border border-green-500/30">
+                <span class="w-2 h-2 rounded-full bg-green-500 animate-pulse inline-block mr-1"></span> Live
+            </div>
+        </div>
+        
+        <!-- Notification Dropdown Panel -->
+        <div v-if="showNotifications" class="notification-dropdown slide-down" @click.stop>
+            <div class="p-3 border-b bg-gray-50 font-bold text-sm flex justify-between items-center sticky top-0">
+                <span><i class="fas fa-bell mr-2 text-green-600"></i>Pending Order Alerts</span>
+                <button v-if="notifications.length" @click="markAllAsRead" class="text-[10px] text-blue-600 hover:underline">Mark all read</button>
+            </div>
+            <div v-if="notifications.length === 0" class="p-8 text-center text-gray-400 text-xs">
+                <i class="fas fa-bell-slash text-2xl mb-2 opacity-50"></i>
+                <p>No pending order notifications</p>
+            </div>
+            <div v-else>
+                <div v-for="(notif, idx) in notifications" :key="idx" 
+                     class="notification-item" :class="{'unread': !notif.read}"
+                     @click="markAsRead(notif)">
+                    <div class="flex gap-2">
+                        <div class="w-8 h-8 rounded-full flex items-center justify-center text-sm bg-blue-100 text-blue-600">
+                            <i class="fas fa-shopping-bag"></i>
+                        </div>
+                        <div class="flex-1">
+                            <p class="text-xs font-semibold text-gray-800">{{ notif.title }}</p>
+                            <p class="text-[10px] text-gray-500 mt-0.5">{{ notif.message }}</p>
+                            <p class="text-[9px] text-gray-400 mt-1">{{ formatTime(notif.timestamp) }}</p>
+                        </div>
+                        <button v-if="notif.orderId" @click.stop="goToOrder(notif.orderId)" class="text-green-600 text-[10px] font-bold">View</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main class="p-4 flex-1 space-y-4">
+        
+        <div class="bg-gray-50 border border-gray-100 p-3 rounded-2xl shadow-sm">
+            <div class="relative">
+                <i class="fas fa-search absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 text-xs"></i>
+                <input type="text" v-model="orderSearch" placeholder="Search by Client Name, Mobile, Order ID..." class="w-full pl-9 pr-3 py-2 border rounded-xl text-xs bg-white shadow-inner outline-none focus:ring-1 focus:ring-green-500">
+            </div>
+        </div>
+
+        <!-- Today's Summary Stats -->
+        <div class="grid grid-cols-3 gap-2">
+            <div class="bg-gradient-to-br from-yellow-50 to-orange-50 border border-yellow-200 rounded-2xl p-3 text-center shadow-sm">
+                <div class="text-2xl font-black text-yellow-600">{{ totalPending }}</div>
+                <div class="text-[10px] font-bold text-yellow-700 mt-0.5 leading-tight"><i class="fas fa-clock mr-0.5"></i>Total<br>Pending</div>
+            </div>
+            <div class="bg-gradient-to-br from-purple-50 to-blue-50 border border-purple-200 rounded-2xl p-3 text-center shadow-sm">
+                <div class="text-2xl font-black text-purple-600">{{ todayPickup }}</div>
+                <div class="text-[10px] font-bold text-purple-700 mt-0.5 leading-tight"><i class="fas fa-truck mr-0.5"></i>Today<br>Pickup</div>
+            </div>
+            <div class="bg-gradient-to-br from-green-50 to-emerald-50 border border-green-200 rounded-2xl p-3 text-center shadow-sm">
+                <div class="text-2xl font-black text-green-600">{{ todayDelivered }}</div>
+                <div class="text-[10px] font-bold text-green-700 mt-0.5 leading-tight"><i class="fas fa-circle-check mr-0.5"></i>Today<br>Delivered</div>
+            </div>
+        </div>
+
+        <div class="space-y-1.5">
+            <label class="block text-[10px] font-bold text-gray-400 uppercase tracking-wider">Pipeline Navigation Filters</label>
+            <div class="flex gap-1.5 overflow-x-auto no-scrollbar pb-1">
+                <button @click="orderStatusFilter = 'all'" :class="{'active': orderStatusFilter == 'all'}" class="filter-chip font-bold">📦 All ({{ orders.length }})</button>
+                <button @click="orderStatusFilter = 'pending'" :class="{'active': orderStatusFilter == 'pending'}" class="filter-chip font-bold bg-yellow-50 text-yellow-700">⏳ Pending ({{ orders.filter(o=>o.status=='pending').length }})</button>
+                <button @click="orderStatusFilter = 'confirmed'" :class="{'active': orderStatusFilter == 'confirmed'}" class="filter-chip font-bold bg-blue-50 text-blue-700">✅ Confirmed ({{ orders.filter(o=>o.status=='confirmed').length }})</button>
+                <button @click="orderStatusFilter = 'shipped'" :class="{'active': orderStatusFilter == 'shipped'}" class="filter-chip font-bold bg-purple-50 text-purple-700">🚚 Shipped ({{ orders.filter(o=>o.status=='shipped').length }})</button>
+                <button @click="orderStatusFilter = 'delivered'" :class="{'active': orderStatusFilter == 'delivered'}" class="filter-chip font-bold bg-green-50 text-green-700">🏠 Delivered ({{ orders.filter(o=>o.status=='delivered').length }})</button>
+                <button @click="orderStatusFilter = 'rejected'" :class="{'active': orderStatusFilter == 'rejected'}" class="filter-chip font-bold bg-red-50 text-red-700">❌ Cancelled ({{ orders.filter(o=>o.status=='rejected').length }})</button>
+            </div>
+        </div>
+
+        <!-- Scan Progress Bar -->
+        <div v-if="scanProgress.show" class="bg-white rounded-xl p-3 shadow-md border-l-4 border-green-500 transition-all scan-animation">
+            <div class="flex justify-between items-center mb-1 text-xs">
+                <span class="font-bold text-green-700"><i class="fas fa-qrcode mr-1"></i> QR Scan Status</span>
+                <span class="text-green-600 font-mono">{{ scanProgress.percent }}%</span>
+            </div>
+            <div class="w-full bg-gray-200 rounded-full h-2.5 overflow-hidden">
+                <div class="bg-green-500 progress-bar h-2.5 rounded-full" :style="{ width: scanProgress.percent + '%' }"></div>
+            </div>
+            <p class="text-[10px] text-gray-500 mt-1 text-center">{{ scanProgress.message }}</p>
+        </div>
+
+        <div class="space-y-4">
+            <div v-for="order in filteredOrders" :key="order.id" :data-order-id="order.id" class="border border-gray-100 rounded-2xl shadow-sm bg-white overflow-hidden border-t-4" :class="getBorderClass(order.status)">
+                
+                <div class="bg-gray-50/80 px-3.5 py-2.5 border-b flex justify-between items-center text-xs">
+                    <div>
+                        <p class="font-mono font-black text-gray-800">ID: #{{ order.id.slice(-6).toUpperCase() }}</p>
+                        <p class="text-[10px] text-gray-400 font-medium mt-0.5">{{ formatDate(order.date) }}</p>
+                    </div>
+                    <div class="flex gap-1">
+                        <button @click="printInvoice(order)" class="bg-blue-100 hover:bg-blue-200 text-blue-700 px-2 py-1 rounded-lg text-[10px] font-bold transition flex items-center gap-1">
+                            <i class="fas fa-print"></i> Invoice
+                        </button>
+                        <span :class="getStatusBadgeClass(order.status)" class="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase">
+                            {{ getStatusText(order.status) }}
+                        </span>
+                    </div>
+                </div>
+
+                <div class="p-3.5 space-y-2 text-xs">
+                    <div class="flex items-center justify-between">
+                        <p class="font-bold text-slate-800"><i class="fas fa-user-circle mr-1.5 text-gray-400 text-sm"></i>{{ order.customerName }}</p>
+                        <a :href="'tel:' + order.customerPhone" class="bg-green-100 hover:bg-green-200 text-green-800 px-2.5 py-1 rounded-lg font-bold flex items-center gap-1 transition">
+                            <i class="fas fa-phone-alt text-[10px]"></i> Call
+                        </a>
+                    </div>
+                    
+                    <div class="bg-slate-50 p-2.5 rounded-xl border border-dashed text-gray-600">
+                        <p class="text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-0.5"><i class="fas fa-map-marked-alt text-red-500 mr-1"></i> Delivery Address:</p>
+                        <p class="font-medium leading-relaxed select-all">{{ order.customerAddress }}</p>
+                    </div>
+
+                    <div class="flex justify-between items-center bg-gray-50 px-2.5 py-1.5 rounded-lg border text-[11px]">
+                        <span class="text-gray-500 font-medium">Payment Mode:</span>
+                        <span class="font-black text-slate-800"><i class="fas fa-wallet text-[10px] text-blue-500 mr-1"></i>{{ order.paymentMethod || 'COD' }}</span>
+                    </div>
+
+                    <div class="pt-1.5">
+                        <p class="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">Package Items:</p>
+                        <div class="flex flex-wrap gap-1">
+                            <span v-for="it in order.items" class="bg-slate-100 px-2 py-0.5 rounded text-[10px] font-bold text-slate-700">
+                                {{ it.name }} <span class="text-green-600 font-black">x{{ it.quantity }}</span>
+                            </span>
+                        </div>
+                    </div>
+                    
+                </div>
+
+                <div class="p-3 bg-gray-50/50 border-t flex flex-col gap-2">
+                    <div class="flex justify-between items-center text-xs">
+                        <span class="text-gray-500 font-medium">Amount to Collect:</span>
+                        <span class="text-base font-black text-green-700">₹{{ Number(order.total).toFixed(2) }}</span>
+                    </div>
+                    
+                    <div class="grid grid-cols-1 mt-1">
+                        <label class="text-[9px] font-extrabold text-gray-400 uppercase tracking-wider mb-1">Update Order Status:</label>
+                        <select v-model="order.status" @change="mutateOrderStatus(order)" class="w-full border rounded-xl px-3 py-2 text-xs bg-white font-bold cursor-pointer shadow-sm outline-none focus:ring-1 focus:ring-green-500">
+                            <option value="pending">⏳ Pending (Review Stage)</option>
+                            <option value="confirmed">✅ Confirmed (Packed & Ready)</option>
+                            <option value="shipped">🚚 Shipped (On the Way)</option>
+                            <option value="delivered">🏠 Delivered (Success Drop)</option>
+                            <option value="rejected">❌ Cancelled (Rejected / Return)</option>
+                        </select>
+                    </div>
+                </div>
+
+            </div>
+
+            <div v-if="filteredOrders.length === 0" class="text-center py-20 text-gray-400 text-xs font-semibold bg-gray-50 rounded-2xl border-2 border-dashed">
+                <i class="fas fa-box-open text-4xl mb-2 opacity-30 text-gray-400"></i>
+                <p>No matching orders found.</p>
+            </div>
+        </div>
+
+    </main>
+
+    <footer class="p-4 bg-slate-900 text-center text-[10px] text-gray-500 border-t border-slate-800">
+        &copy; 2026 ShopSwift Logistics Terminal | Only Pending Order Notifications
+    </footer>
+
+    <!-- QR Scanner Modal -->
+    <div v-if="showScanner" class="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4" @click.self="closeScanner">
+        <div class="bg-white rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl">
+            <div class="bg-slate-900 text-white p-3 flex justify-between items-center">
+                <h3 class="text-sm font-bold"><i class="fas fa-qrcode mr-2"></i>Scan Order QR Code</h3>
+                <button @click="closeScanner" class="text-white/70 hover:text-white"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="p-4">
+                <div id="qr-reader" class="w-full"></div>
+                <p class="text-[10px] text-center text-gray-500 mt-3">Position QR code in front of camera</p>
+                <div v-if="scannedOrderId" class="mt-3 p-2 bg-green-50 rounded-lg text-center">
+                    <p class="text-xs font-bold text-green-700">✅ Scanned Order: #{{ scannedOrderId.slice(-6).toUpperCase() }}</p>
+                    <button @click="goToOrder(scannedOrderId)" class="mt-2 bg-green-600 text-white text-xs px-3 py-1.5 rounded-lg font-bold">View Order</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Invoice Print Modal -->
+    <div v-if="showInvoiceModal" class="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4" @click.self="closeInvoiceModal">
+        <div class="bg-white rounded-2xl w-full max-w-md shadow-2xl invoice-modal">
+            <div class="bg-slate-900 text-white p-3 flex justify-between items-center rounded-t-2xl">
+                <h3 class="text-sm font-bold"><i class="fas fa-receipt mr-2"></i>Order Invoice</h3>
+                <button @click="closeInvoiceModal" class="text-white/70 hover:text-white"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="p-4 invoice-print-area" id="invoice-print-area">
+                <div class="text-center border-b pb-3 mb-3">
+                    <h2 class="text-xl font-black text-blue-600">ShopSwift</h2>
+                    <p class="text-[10px] text-gray-500">Delivery Invoice / Tax Receipt</p>
+                </div>
+                <div class="space-y-2 text-xs" v-if="currentInvoiceOrder">
+                    <div class="flex justify-between"><span class="text-gray-500">Order ID:</span><span class="font-mono font-bold">#{{ currentInvoiceOrder.id?.slice(-6).toUpperCase() }}</span></div>
+                    <div class="flex justify-between"><span class="text-gray-500">Date:</span><span>{{ formatDate(currentInvoiceOrder.date) }}</span></div>
+                    <div class="border-t my-2"></div>
+                    <div><p class="font-bold text-gray-700">Customer Details</p><p>{{ currentInvoiceOrder.customerName }}</p><p class="text-gray-500">{{ currentInvoiceOrder.customerPhone }}</p><p class="text-gray-500 text-[10px]">{{ currentInvoiceOrder.customerAddress }}</p></div>
+                    <div class="border-t my-2"></div>
+                    <p class="font-bold text-gray-700">Items Ordered:</p>
+                    <div class="space-y-1">
+                        <div v-for="item in currentInvoiceOrder.items" class="flex justify-between text-[11px]">
+                            <span>{{ item.name }} x{{ item.quantity }}</span>
+                            <span class="font-bold">₹{{ (item.price * item.quantity).toFixed(2) }}</span>
+                        </div>
+                    </div>
+                    <div class="border-t my-2"></div>
+                    <div class="flex justify-between font-bold text-sm"><span>Total Amount:</span><span class="text-green-700">₹{{ Number(currentInvoiceOrder.total).toFixed(2) }}</span></div>
+                    <div class="flex justify-between text-[10px]"><span>Payment Method:</span><span>{{ currentInvoiceOrder.paymentMethod || 'COD' }}</span></div>
+                    <div class="border-t my-2"></div>
+                    <div class="text-center text-[9px] text-gray-400 mt-3">
+                        <p>Thank you for shopping with ShopSwift!</p>
+                        <p>For support: support@shopswift.com</p>
+                    </div>
+                    <div class="flex justify-center mt-3">
+                        <canvas :id="'invoice-qr-' + currentInvoiceOrder.id" style="width: 80px; height: 80px;"></canvas>
+                    </div>
+                </div>
+            </div>
+            <div class="p-3 border-t flex gap-2 no-print">
+                <button @click="printInvoicePage" class="flex-1 bg-blue-600 text-white py-2 rounded-xl text-xs font-bold"><i class="fas fa-print mr-1"></i> Print</button>
+                <button @click="closeInvoiceModal" class="flex-1 bg-gray-200 text-gray-700 py-2 rounded-xl text-xs font-bold">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Firebase Configuration
+const firebaseConfig = {
+    apiKey: "AIzaSyDbVF9_RqXDXdIASOy2WgbwSmwuiowu2Bg",
+    authDomain: "growthxpressx.firebaseapp.com",
+    databaseURL: "https://growthxpressx-default-rtdb.firebaseio.com",
+    projectId: "growthxpressx",
+    storageBucket: "growthxpressx.appspot.com",
+    messagingSenderId: "967008233535",
+    appId: "1:967008233535:android:ac720ab7c8f7b10bf4308a"
+};
+
+firebase.initializeApp(firebaseConfig);
+const database = firebase.database();
+
+// QR Code Generator Helper
+function generateQRCode(elementId, text, size = 100) {
+    const canvas = document.getElementById(elementId);
+    if (!canvas) return;
+    const QRCodeLib = window.QRCode;
+    if (QRCodeLib) {
+        canvas.innerHTML = '';
+        new QRCodeLib(canvas, {
+            text: text,
+            width: size,
+            height: size,
+            colorDark: "#000000",
+            colorLight: "#ffffff",
+            correctLevel: QRCodeLib.CorrectLevel.H
+        });
+    }
+}
+
+function loadQRCodeLib() {
+    return new Promise((resolve) => {
+        if (window.QRCode) { resolve(); return; }
+        const script = document.createElement('script');
+        script.src = "https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js";
+        script.onload = () => resolve();
+        document.head.appendChild(script);
+    });
+}
+
+new Vue({
+    el: '#app',
+    data: {
+        orders: [],
+        orderSearch: '',
+        orderStatusFilter: 'all',
+        showScanner: false,
+        showInvoiceModal: false,
+        showNotifications: false,
+        currentInvoiceOrder: null,
+        scannedOrderId: null,
+        html5QrCode: null,
+        scanProgress: { show: false, percent: 0, message: '' },
+        notifications: [],
+        previousOrdersSnapshot: []
+    },
+    computed: {
+        filteredOrders() {
+            let filtered = this.orders;
+            if (this.orderStatusFilter !== 'all') {
+                filtered = filtered.filter(o => o.status === this.orderStatusFilter);
+            }
+            if (this.orderSearch) {
+                const query = this.orderSearch.toLowerCase();
+                filtered = filtered.filter(o => 
+                    (o.id && o.id.toLowerCase().includes(query)) ||
+                    (o.customerName && o.customerName.toLowerCase().includes(query)) ||
+                    (o.customerPhone && o.customerPhone.includes(query)) ||
+                    (o.customerAddress && o.customerAddress.toLowerCase().includes(query))
+                );
+            }
+            return filtered;
+        },
+        unreadNotificationsCount() {
+            return this.notifications.filter(n => !n.read).length;
+        },
+        todayPickup() {
+            const today = new Date().toDateString();
+            return this.orders.filter(o =>
+                o.shippedAt &&
+                new Date(o.shippedAt).toDateString() === today
+            ).length;
+        },
+        todayDelivered() {
+            const today = new Date().toDateString();
+            return this.orders.filter(o =>
+                o.deliveredAt &&
+                new Date(o.deliveredAt).toDateString() === today
+            ).length;
+        },
+        totalPending() {
+            return this.orders.filter(o => o.status === 'pending').length;
+        }
+    },
+    methods: {
+        showToast(message) {
+            const toast = document.getElementById('toast');
+            document.getElementById('toastMsg').innerText = message;
+            toast.classList.add('show');
+            setTimeout(() => toast.classList.remove('show'), 2000);
+        },
+        
+        // Add in-app notification entry ONLY for pending orders
+        addPendingOrderNotification(title, message, orderId) {
+            const newNotif = {
+                id: Date.now(),
+                title: title,
+                message: message,
+                type: 'pending_order',
+                orderId: orderId,
+                timestamp: new Date().toISOString(),
+                read: false
+            };
+            this.notifications.unshift(newNotif);
+            if (this.notifications.length > 50) this.notifications.pop();
+            localStorage.setItem('rider_notifications', JSON.stringify(this.notifications));
+        },
+        
+        markAsRead(notif) {
+            notif.read = true;
+            localStorage.setItem('rider_notifications', JSON.stringify(this.notifications));
+        },
+        
+        markAllAsRead() {
+            this.notifications.forEach(n => n.read = true);
+            localStorage.setItem('rider_notifications', JSON.stringify(this.notifications));
+        },
+        
+        toggleNotificationPanel() {
+            this.showNotifications = !this.showNotifications;
+        },
+        
+        formatTime(isoString) {
+            if (!isoString) return '';
+            const date = new Date(isoString);
+            const now = new Date();
+            const diffMs = now - date;
+            const diffMins = Math.floor(diffMs / 60000);
+            if (diffMins < 1) return 'Just now';
+            if (diffMins < 60) return `${diffMins} min ago`;
+            if (diffMins < 1440) return `${Math.floor(diffMins / 60)} hours ago`;
+            return date.toLocaleDateString();
+        },
+        
+        // Detect new orders — push notification + in-app ONLY for pending orders
+        checkForNewOrders() {
+            const currentIds = this.orders.map(o => o.id);
+            const previousIds = this.previousOrdersSnapshot;
+            const newOrders = this.orders.filter(o => !previousIds.includes(o.id));
+            newOrders.forEach(order => {
+                if (order.status === 'pending') {
+                    const title = '🆕 New Pending Order!';
+                    const message = `Order #${order.id.slice(-6)} from ${order.customerName} is pending for delivery.`;
+                    // In-app bell notification only
+                    this.addPendingOrderNotification(title, message, order.id);
+                    this.showToast(`📦 New pending order #${order.id.slice(-6)} received!`);
+                }
+                // No notification for any other status
+            });
+            this.previousOrdersSnapshot = currentIds;
+        },
+        
+        showScanProgress(percent, message) {
+            this.scanProgress = { show: true, percent: percent, message: message };
+            if (percent >= 100) {
+                setTimeout(() => { this.scanProgress.show = false; }, 3000);
+            }
+        },
+        
+        async mutateOrderStatus(order) {
+            try {
+                const now = new Date().toISOString();
+                const payload = {
+                    status: order.status,
+                    riderTimestamp: now
+                };
+                // Save shippedAt when marked as shipped (today pickup tracking)
+                if (order.status === 'shipped') {
+                    payload.shippedAt = now;
+                }
+                // Save deliveredAt when marked as delivered (today delivered tracking)
+                if (order.status === 'delivered') {
+                    payload.deliveredAt = now;
+                }
+                await database.ref(`orders/${order.id}`).update(payload);
+                this.showToast(`Order Status: ${this.getStatusText(order.status)}`);
+            } catch(error) {
+                this.showToast('Sync Error: ' + error.message);
+            }
+        },
+        
+        async printInvoice(order) {
+            this.currentInvoiceOrder = order;
+            this.showInvoiceModal = true;
+            await this.$nextTick();
+            if (order && order.id) {
+                generateQRCode(`invoice-qr-${order.id}`, `ORDER:${order.id}|${order.customerPhone}`, 80);
+            }
+        },
+        
+        printInvoicePage() { window.print(); },
+        closeInvoiceModal() { this.showInvoiceModal = false; this.currentInvoiceOrder = null; },
+        
+        async openQRScanner() {
+            this.showScanner = true;
+            this.scannedOrderId = null;
+            await this.$nextTick();
+            this.startQRScanner();
+        },
+        
+        async startQRScanner() {
+            const qrReaderId = "qr-reader";
+            if (this.html5QrCode) {
+                try { await this.html5QrCode.stop(); } catch(e) {}
+            }
+            this.html5QrCode = new Html5Qrcode(qrReaderId);
+            const config = { fps: 10, qrbox: { width: 250, height: 250 } };
+            try {
+                await this.html5QrCode.start({ facingMode: "environment" }, config, (decodedText) => {
+                    this.handleQRScan(decodedText);
+                }, (error) => {});
+            } catch(err) { this.showToast("Camera error: " + err); }
+        },
+        
+        handleQRScan(decodedText) {
+            let progress = 0;
+            const interval = setInterval(() => {
+                progress += 10;
+                this.showScanProgress(progress, 'Verifying QR Code...');
+                if (progress >= 100) clearInterval(interval);
+            }, 80);
+            
+            let orderId = null;
+            if (decodedText.includes('ORDER:')) {
+                orderId = decodedText.split('ORDER:')[1].split('|')[0];
+            } else if (decodedText.length > 10 && decodedText.match(/^[a-zA-Z0-9\-]+$/)) {
+                orderId = decodedText;
+            } else {
+                try { const parsed = JSON.parse(decodedText); orderId = parsed.orderId || parsed.id; } catch(e) { orderId = decodedText; }
+            }
+            
+            setTimeout(() => {
+                clearInterval(interval);
+                this.scanProgress.show = false;
+                if (orderId && this.orders.find(o => o.id === orderId)) {
+                    this.scannedOrderId = orderId;
+                    this.showToast(`✅ Order #${orderId.slice(-6)} found!`);
+                    this.closeScanner();
+                    setTimeout(() => { this.goToOrder(orderId); }, 500);
+                } else {
+                    this.showToast("❌ Invalid QR or order not found");
+                }
+            }, 1000);
+        },
+        
+        goToOrder(orderId) {
+            const order = this.orders.find(o => o.id === orderId);
+            if (order) {
+                this.orderSearch = order.id.slice(-6);
+                this.orderStatusFilter = 'all';
+                this.$nextTick(() => {
+                    const el = document.querySelector(`[data-order-id="${orderId}"]`);
+                    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                });
+                this.showToast(`📍 Order #${orderId.slice(-6)} located`);
+                this.showNotifications = false;
+            } else {
+                this.showToast("Order not found");
+            }
+        },
+        
+        closeScanner() {
+            if (this.html5QrCode) { this.html5QrCode.stop().catch(e => console.log(e)); }
+            this.showScanner = false;
+            this.scannedOrderId = null;
+        },
+        
+        loadOrdersRealtimeStream() {
+            database.ref('orders').on('value', async (snapshot) => {
+                const data = snapshot.val();
+                if (data) {
+                    this.orders = Object.keys(data).map(key => ({
+                        id: key,
+                        ...data[key]
+                    })).reverse();
+                    
+                    await this.$nextTick();
+                    await loadQRCodeLib();
+                    this.orders.forEach(order => {
+                        const qrText = `ORDER:${order.id}|${order.customerPhone}`;
+                        generateQRCode(`qr-canvas-${order.id}`, qrText, 60);
+                    });
+                    this.checkForNewOrders();
+                } else {
+                    this.orders = [];
+                }
+            });
+        },
+        
+        getBorderClass(status) {
+            const map = { pending: 'border-yellow-400', confirmed: 'border-blue-400', shipped: 'border-purple-400', delivered: 'border-green-400', rejected: 'border-red-400' };
+            return map[status] || 'border-gray-200';
+        },
+        getStatusBadgeClass(status) {
+            const map = { pending: 'bg-yellow-100 text-yellow-700', confirmed: 'bg-blue-100 text-blue-700', shipped: 'bg-purple-100 text-purple-700', delivered: 'bg-green-100 text-green-700', rejected: 'bg-red-100 text-red-700' };
+            return map[status] || 'bg-gray-100 text-gray-700';
+        },
+        getStatusText(status) {
+            const map = { pending: 'Pending', confirmed: 'Confirmed', shipped: 'Shipped', delivered: 'Delivered', rejected: 'Cancelled' };
+            return map[status] || status;
+        },
+        formatDate(isoString) {
+            if (!isoString) return '';
+            return new Date(isoString).toLocaleDateString('en-IN', {
+                day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit'
+            });
+        },
+        
+        loadSavedNotifications() {
+            const saved = localStorage.getItem('rider_notifications');
+            if (saved) {
+                try { this.notifications = JSON.parse(saved); } catch(e) {}
+            }
+        }
+    },
+    async mounted() {
+        this.loadSavedNotifications();
+        await loadQRCodeLib();
+        this.loadOrdersRealtimeStream();
+        // Click outside to close notification panel
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('.notification-bell') && !e.target.closest('.notification-dropdown')) {
+                this.showNotifications = false;
+            }
+        });
+    },
+    beforeDestroy() {
+        if (this.html5QrCode) { this.html5QrCode.stop().catch(e => console.log(e)); }
+    }
+});
+</script>
+</body>
+</html>
