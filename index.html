@@ -3,18 +3,18 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes, viewport-fit=cover">
-    <title>ShopSwift - Delivery Boy Panel | Pending Notifications Only</title>
+    <title>Pinkkart - Delivery Boy Panel (Photo + Earnings + Call Fix)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
     <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-database-compat.js"></script>
-    
-    <!-- HTML5 QR Code Scanner Library -->
+    <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-storage-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-auth-compat.js"></script>
     <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
-    
     <script src="https://cdn.jsdelivr.net/npm/vue@2.7.14/dist/vue.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
 
     <style>
         * { font-family: 'Inter', sans-serif; }
@@ -55,8 +55,7 @@
         }
         .notification-item {
             padding: 12px; border-bottom: 1px solid #f0f0f0;
-            transition: background 0.2s;
-            cursor: pointer;
+            transition: background 0.2s; cursor: pointer;
         }
         .notification-item:hover { background: #f3f4f6; }
         .notification-item.unread { background: #eff6ff; }
@@ -67,13 +66,19 @@
             .invoice-print-area, .invoice-print-area * { visibility: visible; }
             .invoice-print-area { position: absolute; top: 0; left: 0; width: 100%; }
         }
-        .slide-down {
-            animation: slideDown 0.3s ease-out;
-        }
+        .slide-down { animation: slideDown 0.3s ease-out; }
         @keyframes slideDown {
             from { opacity: 0; transform: translateY(-10px); }
             to { opacity: 1; transform: translateY(0); }
         }
+        .login-bg { background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%); }
+        .camera-preview { 
+            position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+            background: black; z-index: 1000;
+            display: flex; flex-direction: column;
+        }
+        .earning-card { transition: all 0.2s; cursor: pointer; }
+        .earning-card:hover { transform: translateY(-2px); box-shadow: 0 10px 20px -5px rgba(0,0,0,0.1); }
     </style>
 </head>
 <body class="bg-gray-50 text-gray-800 antialiased">
@@ -81,253 +86,497 @@
 <div id="toast" class="toast"><i class="fas fa-check-circle text-green-400 mr-2"></i> <span id="toastMsg">Status Updated!</span></div>
 
 <div id="app" class="max-w-md mx-auto min-h-screen flex flex-col bg-white shadow-xl relative">
-    
-    <header class="bg-slate-900 text-white p-4 sticky top-0 z-40 shadow flex justify-between items-center">
-        <div class="flex items-center gap-2">
-            <i class="fas fa-shipping-fast text-green-400 text-xl"></i>
-            <div>
-                <h1 class="text-base font-black tracking-wide">ShopSwift <span class="text-green-400">Rider</span></h1>
-                <p class="text-[10px] text-gray-400 font-medium">Delivery Agent Terminal</p>
+
+    <!-- ==================== LOGIN SCREEN ==================== -->
+    <div v-if="!loggedInRider" class="fixed inset-0 login-bg flex items-center justify-center z-50 p-4 backdrop-blur-sm">
+        <div class="bg-white w-full max-w-sm rounded-3xl p-6 shadow-2xl space-y-5">
+            <div class="text-center">
+                <div class="w-16 h-16 bg-emerald-50 rounded-2xl flex items-center justify-center text-emerald-500 text-3xl mx-auto shadow-sm">
+                    <i class="fas fa-shipping-fast"></i>
+                </div>
+                <h2 class="text-xl font-black text-slate-800 mt-3">Pinkkart Rider Login</h2>
+                <p class="text-xs text-slate-400 font-medium mt-1">Apna registered mobile aur password enter karein</p>
+            </div>
+            <div class="space-y-3 text-xs">
+                <div v-if="loginError" class="bg-red-50 border border-red-200 text-red-600 rounded-xl px-3 py-2.5 text-[11px] font-semibold flex items-center gap-2">
+                    <i class="fas fa-exclamation-circle"></i> {{ loginError }}
+                </div>
+                <div>
+                    <label class="block font-bold text-slate-600 mb-1.5 uppercase text-[10px] tracking-wider">Email Address</label>
+                    <div class="relative">
+                        <i class="fas fa-envelope absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs"></i>
+                        <input type="email" v-model="loginForm.email" @keyup.enter="handleRiderLogin" placeholder="Registered email address" class="w-full pl-9 p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-emerald-500 focus:bg-white transition">
+                    </div>
+                </div>
+                <div>
+                    <label class="block font-bold text-slate-600 mb-1.5 uppercase text-[10px] tracking-wider">Password</label>
+                    <div class="relative">
+                        <i class="fas fa-lock absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs"></i>
+                        <input :type="showLoginPassword ? 'text' : 'password'" v-model="loginForm.password" @keyup.enter="handleRiderLogin" placeholder="Your login password" class="w-full pl-9 pr-10 p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-emerald-500 focus:bg-white transition">
+                        <button @click="showLoginPassword = !showLoginPassword" class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+                            <i :class="showLoginPassword ? 'fas fa-eye-slash' : 'fas fa-eye'" class="text-xs"></i>
+                        </button>
+                    </div>
+                </div>
+                <button @click="handleRiderLogin" :disabled="authLoading" class="w-full bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-300 text-white p-3.5 rounded-xl font-bold transition flex justify-center items-center gap-2 mt-2 shadow-lg">
+                    <i v-if="authLoading" class="fas fa-circle-notch fa-spin"></i>
+                    <i v-else class="fas fa-sign-in-alt"></i>
+                    <span>{{ authLoading ? 'Verifying...' : 'Login to Panel' }}</span>
+                </button>
+            </div>
+            <p class="text-center text-[10px] text-gray-400">Contact admin to get your credentials</p>
+        </div>
+    </div>
+
+    <!-- ==================== MAIN PANEL ==================== -->
+    <template v-if="loggedInRider">
+
+        <!-- Tab Navigation -->
+        <div class="bg-slate-900 text-white p-3 sticky top-0 z-40 shadow flex justify-between items-center">
+            <div class="flex items-center gap-2">
+                <i class="fas fa-shipping-fast text-green-400 text-xl"></i>
+                <div>
+                    <h1 class="text-base font-black tracking-wide">{{ loggedInRider.name }}</h1>
+                    <p class="text-[10px] text-emerald-400 font-bold">📞 {{ loggedInRider.phone }}</p>
+                </div>
+            </div>
+            <div class="flex items-center gap-2">
+                <button @click="activeTab = 'orders'" :class="activeTab == 'orders' ? 'bg-green-600' : 'bg-slate-700'" class="px-3 py-1.5 rounded-lg text-[10px] font-bold transition"><i class="fas fa-list mr-1"></i>Orders</button>
+                <button @click="activeTab = 'earnings'" :class="activeTab == 'earnings' ? 'bg-green-600' : 'bg-slate-700'" class="px-3 py-1.5 rounded-lg text-[10px] font-bold transition"><i class="fas fa-rupee-sign mr-1"></i>Earnings</button>
+                <button @click="handleRiderLogout" class="bg-red-600/30 hover:bg-red-600/50 text-red-300 text-[10px] font-black px-2.5 py-1.5 rounded-lg transition">
+                    <i class="fas fa-sign-out-alt"></i>
+                </button>
             </div>
         </div>
-        <div class="flex items-center gap-3">
-            <!-- Notification Bell with Badge (Only Pending Order Notifications) -->
-            <div class="notification-bell relative" @click="toggleNotificationPanel">
-                <i class="fas fa-bell text-gray-300 text-lg hover:text-white transition"></i>
-                <span v-if="unreadNotificationsCount > 0" class="notification-badge">{{ unreadNotificationsCount }}</span>
+
+        <!-- ==================== ORDERS TAB ==================== -->
+        <main v-if="activeTab == 'orders'" class="p-4 flex-1 space-y-4 pb-24">
+
+            <!-- Stats -->
+            <div class="grid grid-cols-4 gap-2">
+                <div class="bg-gradient-to-br from-yellow-50 to-orange-50 border border-yellow-200 rounded-2xl p-3 text-center shadow-sm">
+                    <div class="text-2xl font-black text-yellow-600">{{ orders.filter(o=>o.status=='pending').length }}</div>
+                    <div class="text-[10px] font-bold text-yellow-700">Pending</div>
+                </div>
+                <div class="bg-gradient-to-br from-purple-50 to-blue-50 border border-purple-200 rounded-2xl p-3 text-center shadow-sm">
+                    <div class="text-2xl font-black text-purple-600">{{ orders.filter(o=>o.status=='shipped').length }}</div>
+                    <div class="text-[10px] font-bold text-purple-700">On Way</div>
+                </div>
+                <div class="bg-gradient-to-br from-green-50 to-emerald-50 border border-green-200 rounded-2xl p-3 text-center shadow-sm">
+                    <div class="text-2xl font-black text-green-600">{{ todayDeliveredCount }}</div>
+                    <div class="text-[10px] font-bold text-green-700">Today Done</div>
+                </div>
+                <div class="bg-gradient-to-br from-red-50 to-pink-50 border border-red-200 rounded-2xl p-3 text-center shadow-sm">
+                    <div class="text-2xl font-black text-red-500">{{ orders.filter(o=>o.status=='cancelled'||o.status=='rejected').length }}</div>
+                    <div class="text-[10px] font-bold text-red-600">Cancelled</div>
+                </div>
             </div>
-            <button @click="openQRScanner" class="bg-green-600 hover:bg-green-700 text-white text-[10px] font-bold px-3 py-1.5 rounded-full transition flex items-center gap-1 shadow">
-                <i class="fas fa-qrcode"></i> Scan QR
-            </button>
-            <div class="bg-slate-800 px-2.5 py-1 rounded-full text-[10px] font-bold text-green-400 border border-green-500/30">
-                <span class="w-2 h-2 rounded-full bg-green-500 animate-pulse inline-block mr-1"></span> Live
+
+            <!-- Search -->
+            <div class="relative">
+                <i class="fas fa-search absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 text-xs"></i>
+                <input type="text" v-model="orderSearch" placeholder="Search by Name, Mobile, Order ID, Product..." class="w-full pl-9 pr-3 py-2.5 border rounded-xl text-xs bg-white shadow-inner outline-none focus:ring-1 focus:ring-green-500">
             </div>
-        </div>
-        
-        <!-- Notification Dropdown Panel -->
-        <div v-if="showNotifications" class="notification-dropdown slide-down" @click.stop>
-            <div class="p-3 border-b bg-gray-50 font-bold text-sm flex justify-between items-center sticky top-0">
-                <span><i class="fas fa-bell mr-2 text-green-600"></i>Pending Order Alerts</span>
-                <button v-if="notifications.length" @click="markAllAsRead" class="text-[10px] text-blue-600 hover:underline">Mark all read</button>
+
+            <!-- Filter Chips -->
+            <div class="flex gap-1.5 overflow-x-auto no-scrollbar pb-1">
+                <button @click="orderStatusFilter = 'all'" :class="{'active': orderStatusFilter == 'all'}" class="filter-chip">All ({{ orders.length }})</button>
+                <button @click="orderStatusFilter = 'pending'" :class="{'active': orderStatusFilter == 'pending'}" class="filter-chip bg-yellow-50">Pending</button>
+                <button @click="orderStatusFilter = 'confirmed'" :class="{'active': orderStatusFilter == 'confirmed'}" class="filter-chip bg-blue-50">Confirmed</button>
+                <button @click="orderStatusFilter = 'shipped'" :class="{'active': orderStatusFilter == 'shipped'}" class="filter-chip bg-purple-50">Shipped</button>
+                <button @click="orderStatusFilter = 'delivered'" :class="{'active': orderStatusFilter == 'delivered'}" class="filter-chip bg-green-50">Delivered</button>
+                <button @click="orderStatusFilter = 'cancelled'" :class="{'active': orderStatusFilter == 'cancelled'}" class="filter-chip bg-red-50">Cancelled</button>
             </div>
-            <div v-if="notifications.length === 0" class="p-8 text-center text-gray-400 text-xs">
-                <i class="fas fa-bell-slash text-2xl mb-2 opacity-50"></i>
-                <p>No pending order notifications</p>
-            </div>
-            <div v-else>
-                <div v-for="(notif, idx) in notifications" :key="idx" 
-                     class="notification-item" :class="{'unread': !notif.read}"
-                     @click="markAsRead(notif)">
-                    <div class="flex gap-2">
-                        <div class="w-8 h-8 rounded-full flex items-center justify-center text-sm bg-blue-100 text-blue-600">
-                            <i class="fas fa-shopping-bag"></i>
+
+            <!-- Orders List -->
+            <div class="space-y-4">
+                <div v-for="order in filteredOrders" :key="order.id" class="border border-gray-100 rounded-2xl shadow-sm bg-white overflow-hidden border-t-4" :class="getBorderClass(order.status)">
+                    <div :class="(!order.assignedRider && !order.assignedRiderPhone) ? 'bg-orange-50' : 'bg-gray-50/80'" class="px-3.5 py-2.5 border-b flex justify-between items-center text-xs">
+                        <div>
+                            <div class="flex items-center gap-2">
+                                <p class="font-mono font-black text-gray-800">#{{ getShortId(order.id) }}</p>
+                                <span v-if="!order.assignedRider && !order.assignedRiderPhone" class="bg-orange-500 text-white text-[9px] font-black px-2 py-0.5 rounded-full animate-pulse">🆕 NEW</span>
+                            </div>
+                            <p class="text-[10px] text-gray-400">{{ formatDate(order.date) }}</p>
                         </div>
-                        <div class="flex-1">
-                            <p class="text-xs font-semibold text-gray-800">{{ notif.title }}</p>
-                            <p class="text-[10px] text-gray-500 mt-0.5">{{ notif.message }}</p>
-                            <p class="text-[9px] text-gray-400 mt-1">{{ formatTime(notif.timestamp) }}</p>
+                        <div class="flex gap-1">
+                            <button @click="printInvoice(order)" class="bg-blue-100 text-blue-700 px-2 py-1 rounded-lg text-[10px] font-bold"><i class="fas fa-print"></i></button>
+                            <span :class="getStatusBadgeClass(order.status)" class="px-2 py-0.5 rounded-full text-[10px] font-bold">{{ getStatusText(order.status) }}</span>
                         </div>
-                        <button v-if="notif.orderId" @click.stop="goToOrder(notif.orderId)" class="text-green-600 text-[10px] font-bold">View</button>
+                    </div>
+                    <div class="p-3.5 space-y-2 text-xs">
+                        <!-- Shop Name Badge -->
+                        <div v-if="order.items && order.items[0] && order.items[0].shopkeeperName" class="flex items-center gap-1.5 mb-1">
+                            <span class="bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full text-[10px] font-bold"><i class="fas fa-store mr-1"></i>{{ order.items[0].shopkeeperName }}</span>
+                        </div>
+                        <div class="flex items-center justify-between">
+                            <p class="font-bold"><i class="fas fa-user mr-1 text-gray-400"></i>{{ order.customerName }}</p>
+                            <!-- FIXED CALL BUTTON - Using tel: scheme properly -->
+                            <a :href="'tel:' + order.customerPhone" class="bg-green-100 text-green-800 px-3 py-1.5 rounded-lg font-bold flex items-center gap-1 text-xs">
+                                <i class="fas fa-phone-alt"></i> Call
+                            </a>
+                        </div>
+                        <!-- Order Items -->
+                        <div v-if="order.items && order.items.length" class="bg-blue-50/60 p-2.5 rounded-xl">
+                            <p class="text-[10px] font-bold text-gray-400 mb-1">🛍️ Items:</p>
+                            <div class="flex flex-wrap gap-1">
+                                <span v-for="item in order.items" :key="item.id" class="bg-white border border-blue-100 px-2 py-0.5 rounded-lg text-[10px] font-semibold text-gray-700">{{ item.name }} <span class="text-blue-600 font-black">x{{ item.quantity }}</span></span>
+                            </div>
+                        </div>
+                        <div class="bg-slate-50 p-2.5 rounded-xl">
+                            <p class="text-[10px] font-bold text-gray-400">📍 Delivery Address:</p>
+                            <p class="font-medium">{{ order.customerAddress }}</p>
+                        </div>
+                        <div class="flex justify-between items-center">
+                            <span class="text-gray-500">Amount:</span>
+                            <div class="flex items-center gap-2">
+                                <span class="font-black text-green-700">₹{{ Number(order.total).toFixed(2) }}</span>
+                                <!-- COD Badge -->
+                                <span v-if="!order.paymentMethod || order.paymentMethod === 'COD'" class="bg-orange-100 text-orange-700 text-[9px] font-black px-2 py-0.5 rounded-full border border-orange-200">
+                                    💵 COD
+                                </span>
+                                <!-- Online Paid Badge -->
+                                <span v-if="order.paymentMethod === 'ONLINE'" class="bg-green-100 text-green-700 text-[9px] font-black px-2 py-0.5 rounded-full border border-green-300 flex items-center gap-1">
+                                    ✅ Online Paid
+                                </span>
+                            </div>
+                        </div>
+
+                        <!-- Online Payment Details Banner -->
+                        <div v-if="order.paymentMethod === 'ONLINE'" class="bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 rounded-xl p-2.5 space-y-1.5">
+                            <p class="text-[10px] font-black text-green-700 flex items-center gap-1.5">
+                                <i class="fas fa-shield-alt"></i> Online Payment Verified
+                            </p>
+                            <div v-if="order.utrNumber" class="flex items-center justify-between">
+                                <span class="text-[10px] text-gray-500">UTR Number:</span>
+                                <span class="text-[10px] font-black text-gray-800 font-mono bg-white px-2 py-0.5 rounded-lg border">{{ order.utrNumber }}</span>
+                            </div>
+                            <div v-if="order.paymentScreenshot" class="flex items-center justify-between">
+                                <span class="text-[10px] text-gray-500">Payment Proof:</span>
+                                <a :href="order.paymentScreenshot" target="_blank" class="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-lg border border-blue-200 flex items-center gap-1">
+                                    <i class="fas fa-image"></i> Screenshot dekho
+                                </a>
+                            </div>
+                            <div v-if="order.paymentVerifiedAt" class="flex items-center justify-between">
+                                <span class="text-[10px] text-gray-500">Paid on:</span>
+                                <span class="text-[10px] font-semibold text-gray-600">{{ formatDate(order.paymentVerifiedAt) }}</span>
+                            </div>
+                            <p class="text-[9px] text-green-600 font-semibold bg-green-100 rounded-lg px-2 py-1 text-center">
+                                🎉 Delivery par customer se cash mat maango — payment ho chuki hai!
+                            </p>
+                        </div>
+
+                        <!-- Cancel Reason Banner -->
+                        <div v-if="order.status === 'cancelled' || order.status === 'rejected'" class="bg-red-50 border border-red-200 rounded-xl p-2.5 flex items-start gap-2">
+                            <i class="fas fa-times-circle text-red-500 mt-0.5"></i>
+                            <div>
+                                <p class="text-[10px] font-black text-red-600">❌ Order Cancel Ho Gaya</p>
+                                <p v-if="order.cancelReason" class="text-[10px] text-red-500 mt-0.5">Reason: {{ order.cancelReason }}</p>
+                                <p v-if="order.cancelledByName" class="text-[9px] text-gray-400 mt-0.5">By: {{ order.cancelledByName }}</p>
+                            </div>
+                        </div>
+
+                        <!-- 🔒 ONLINE PAYMENT PENDING LOCK BANNER -->
+                        <div v-if="order.paymentMethod === 'ONLINE' && !order.paymentApprovedByAdmin" class="bg-amber-50 border-2 border-amber-400 rounded-xl p-3 flex items-start gap-2.5 mt-1">
+                            <i class="fas fa-lock text-amber-500 text-base mt-0.5"></i>
+                            <div class="flex-1">
+                                <p class="text-[11px] font-black text-amber-700">🔒 Admin Approval Pending</p>
+                                <p class="text-[10px] text-amber-600 mt-0.5">Online payment verify hone ke baad Admin approve karega — tab aap order confirm kar sakenge.</p>
+                            </div>
+                        </div>
+                        <!-- ✅ ONLINE PAYMENT APPROVED BANNER -->
+                        <div v-if="order.paymentMethod === 'ONLINE' && order.paymentApprovedByAdmin" class="bg-green-50 border border-green-300 rounded-xl p-2.5 flex items-center gap-2 mt-1">
+                            <i class="fas fa-unlock text-green-600 text-sm"></i>
+                            <p class="text-[10px] font-black text-green-700">✅ Admin ne Payment Approve kiya — Panel Unlocked!</p>
+                        </div>
+
+                        <div class="flex gap-2 mt-1">
+                            <select v-model="order.status" @change="mutateOrderStatus(order)" class="flex-1 border rounded-xl px-3 py-2 text-xs font-bold bg-white" :disabled="order.status === 'cancelled' || order.status === 'rejected' || (order.paymentMethod === 'ONLINE' && !order.paymentApprovedByAdmin)">
+                                <option value="pending">⏳ Pending</option>
+                                <option value="confirmed">✅ Order Confirmed</option>
+                                <option value="shipped">🚚 Out for Delivery</option>
+                                <option value="delivered">🏠 Delivered</option>
+                                <option value="cancelled">❌ Cancelled</option>
+                            </select>
+                            <!-- Photo Capture Button (only for delivered) -->
+                            <button v-if="order.status === 'delivered' && !order.deliveryPhoto" @click="openCameraForOrder(order)" class="bg-purple-600 text-white px-3 rounded-xl text-[10px] font-bold"><i class="fas fa-camera"></i> POD</button>
+                            <span v-if="order.deliveryPhoto" class="bg-green-100 text-green-700 px-3 py-2 rounded-xl text-[10px] font-bold"><i class="fas fa-check-circle"></i> Photo</span>
+                            <!-- Cancel Button -->
+                            <!-- Cancel Button — hide if online payment not yet approved -->
+                            <button v-if="order.status !== 'delivered' && order.status !== 'cancelled' && !(order.paymentMethod === 'ONLINE' && !order.paymentApprovedByAdmin)" @click="cancelOrder(order)" class="bg-red-100 text-red-700 hover:bg-red-200 px-3 rounded-xl text-[10px] font-bold transition"><i class="fas fa-times-circle"></i> Cancel</button>
+                        </div>
+                    </div>
+                </div>
+                <div v-if="filteredOrders.length === 0" class="text-center py-20 text-gray-400 text-xs">
+                    <i class="fas fa-box-open text-4xl mb-3 opacity-30"></i>
+                    <p class="font-bold text-sm text-gray-500">Koi order assign nahi hua</p>
+                    <p class="mt-1 text-[11px]">Admin ya Dukandar jab order assign karega, yahan dikhega</p>
+                </div>
+            </div>
+        </main>
+
+        <!-- ==================== EARNINGS TAB ==================== -->
+        <main v-if="activeTab == 'earnings'" class="p-4 flex-1 space-y-4 pb-24">
+
+            <!-- Total Earning Card -->
+            <div class="bg-gradient-to-r from-emerald-600 to-teal-600 rounded-2xl p-5 text-white shadow-lg">
+                <p class="text-[10px] opacity-80 uppercase tracking-wide font-bold">💰 Total Earning</p>
+                <p class="text-4xl font-black mt-1">₹{{ totalGrossEarnings.toFixed(2) }}</p>
+                <p class="text-xs mt-1 opacity-80">{{ deliveredOrders.length }} deliveries × ₹{{ perDeliveryRate }} per delivery</p>
+                <div class="mt-3 pt-3 border-t border-white/20 grid grid-cols-3 gap-2 text-center text-[10px]">
+                    <div>
+                        <p class="opacity-70">Total Deliveries</p>
+                        <p class="font-black text-lg">{{ deliveredOrders.length }}</p>
+                    </div>
+                    <div>
+                        <p class="opacity-70">Today</p>
+                        <p class="font-black text-lg">{{ todayDeliveredCount }}</p>
+                    </div>
+                    <div>
+                        <p class="opacity-70">Rate/Order</p>
+                        <p class="font-black text-lg">₹{{ perDeliveryRate }}</p>
                     </div>
                 </div>
             </div>
-        </div>
-    </header>
 
-    <main class="p-4 flex-1 space-y-4">
-        
-        <div class="bg-gray-50 border border-gray-100 p-3 rounded-2xl shadow-sm">
-            <div class="relative">
-                <i class="fas fa-search absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 text-xs"></i>
-                <input type="text" v-model="orderSearch" placeholder="Search by Client Name, Mobile, Order ID..." class="w-full pl-9 pr-3 py-2 border rounded-xl text-xs bg-white shadow-inner outline-none focus:ring-1 focus:ring-green-500">
+            <!-- Available Balance Card -->
+            <div class="bg-gradient-to-r from-indigo-600 to-blue-600 rounded-2xl p-5 text-white shadow-lg">
+                <p class="text-[10px] opacity-80 uppercase tracking-wide font-bold">🏦 Available Balance</p>
+                <p class="text-4xl font-black mt-1">₹{{ totalEarnings.toFixed(2) }}</p>
+                <div class="mt-3 pt-3 border-t border-white/20 flex justify-between text-[11px]">
+                    <span class="opacity-80">Total Earned: ₹{{ totalGrossEarnings.toFixed(2) }}</span>
+                    <span class="opacity-80">Withdrawn: ₹{{ totalWithdrawn.toFixed(2) }}</span>
+                </div>
             </div>
-        </div>
 
-        <!-- Today's Summary Stats -->
-        <div class="grid grid-cols-3 gap-2">
-            <div class="bg-gradient-to-br from-yellow-50 to-orange-50 border border-yellow-200 rounded-2xl p-3 text-center shadow-sm">
-                <div class="text-2xl font-black text-yellow-600">{{ totalPending }}</div>
-                <div class="text-[10px] font-bold text-yellow-700 mt-0.5 leading-tight"><i class="fas fa-clock mr-0.5"></i>Total<br>Pending</div>
-            </div>
-            <div class="bg-gradient-to-br from-purple-50 to-blue-50 border border-purple-200 rounded-2xl p-3 text-center shadow-sm">
-                <div class="text-2xl font-black text-purple-600">{{ todayPickup }}</div>
-                <div class="text-[10px] font-bold text-purple-700 mt-0.5 leading-tight"><i class="fas fa-truck mr-0.5"></i>Today<br>Pickup</div>
-            </div>
-            <div class="bg-gradient-to-br from-green-50 to-emerald-50 border border-green-200 rounded-2xl p-3 text-center shadow-sm">
-                <div class="text-2xl font-black text-green-600">{{ todayDelivered }}</div>
-                <div class="text-[10px] font-bold text-green-700 mt-0.5 leading-tight"><i class="fas fa-circle-check mr-0.5"></i>Today<br>Delivered</div>
-            </div>
-        </div>
-
-        <div class="space-y-1.5">
-            <label class="block text-[10px] font-bold text-gray-400 uppercase tracking-wider">Pipeline Navigation Filters</label>
-            <div class="flex gap-1.5 overflow-x-auto no-scrollbar pb-1">
-                <button @click="orderStatusFilter = 'all'" :class="{'active': orderStatusFilter == 'all'}" class="filter-chip font-bold">📦 All ({{ orders.length }})</button>
-                <button @click="orderStatusFilter = 'pending'" :class="{'active': orderStatusFilter == 'pending'}" class="filter-chip font-bold bg-yellow-50 text-yellow-700">⏳ Pending ({{ orders.filter(o=>o.status=='pending').length }})</button>
-                <button @click="orderStatusFilter = 'confirmed'" :class="{'active': orderStatusFilter == 'confirmed'}" class="filter-chip font-bold bg-blue-50 text-blue-700">✅ Confirmed ({{ orders.filter(o=>o.status=='confirmed').length }})</button>
-                <button @click="orderStatusFilter = 'shipped'" :class="{'active': orderStatusFilter == 'shipped'}" class="filter-chip font-bold bg-purple-50 text-purple-700">🚚 Shipped ({{ orders.filter(o=>o.status=='shipped').length }})</button>
-                <button @click="orderStatusFilter = 'delivered'" :class="{'active': orderStatusFilter == 'delivered'}" class="filter-chip font-bold bg-green-50 text-green-700">🏠 Delivered ({{ orders.filter(o=>o.status=='delivered').length }})</button>
-                <button @click="orderStatusFilter = 'rejected'" :class="{'active': orderStatusFilter == 'rejected'}" class="filter-chip font-bold bg-red-50 text-red-700">❌ Cancelled ({{ orders.filter(o=>o.status=='rejected').length }})</button>
-            </div>
-        </div>
-
-        <!-- Scan Progress Bar -->
-        <div v-if="scanProgress.show" class="bg-white rounded-xl p-3 shadow-md border-l-4 border-green-500 transition-all scan-animation">
-            <div class="flex justify-between items-center mb-1 text-xs">
-                <span class="font-bold text-green-700"><i class="fas fa-qrcode mr-1"></i> QR Scan Status</span>
-                <span class="text-green-600 font-mono">{{ scanProgress.percent }}%</span>
-            </div>
-            <div class="w-full bg-gray-200 rounded-full h-2.5 overflow-hidden">
-                <div class="bg-green-500 progress-bar h-2.5 rounded-full" :style="{ width: scanProgress.percent + '%' }"></div>
-            </div>
-            <p class="text-[10px] text-gray-500 mt-1 text-center">{{ scanProgress.message }}</p>
-        </div>
-
-        <div class="space-y-4">
-            <div v-for="order in filteredOrders" :key="order.id" :data-order-id="order.id" class="border border-gray-100 rounded-2xl shadow-sm bg-white overflow-hidden border-t-4" :class="getBorderClass(order.status)">
-                
-                <div class="bg-gray-50/80 px-3.5 py-2.5 border-b flex justify-between items-center text-xs">
+            <!-- Today Stats -->
+            <div class="bg-white rounded-xl p-4 border shadow-sm">
+                <div class="flex justify-between items-center">
                     <div>
-                        <p class="font-mono font-black text-gray-800">ID: #{{ order.id.slice(-6).toUpperCase() }}</p>
-                        <p class="text-[10px] text-gray-400 font-medium mt-0.5">{{ formatDate(order.date) }}</p>
+                        <p class="text-[10px] text-gray-400 uppercase font-bold">Per Delivery Rate</p>
+                        <p class="text-xl font-black text-emerald-600">₹{{ perDeliveryRate }}</p>
                     </div>
-                    <div class="flex gap-1">
-                        <button @click="printInvoice(order)" class="bg-blue-100 hover:bg-blue-200 text-blue-700 px-2 py-1 rounded-lg text-[10px] font-bold transition flex items-center gap-1">
-                            <i class="fas fa-print"></i> Invoice
-                        </button>
-                        <span :class="getStatusBadgeClass(order.status)" class="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase">
-                            {{ getStatusText(order.status) }}
+                    <div class="text-right">
+                        <p class="text-[10px] text-gray-400 uppercase font-bold">Today's Earnings</p>
+                        <p class="text-xl font-black text-blue-600">₹{{ todayEarnings.toFixed(2) }}</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Withdraw Earnings -->
+            <div class="bg-white rounded-xl border shadow-sm overflow-hidden">
+                <div class="px-4 py-3 bg-gradient-to-r from-indigo-50 to-blue-50 border-b flex justify-between items-center">
+                    <div>
+                        <p class="text-[10px] text-gray-400 uppercase font-bold tracking-wide">Available Balance</p>
+                        <p class="text-2xl font-black text-indigo-700">₹{{ totalEarnings.toFixed(2) }}</p>
+                    </div>
+                    <button @click="showWithdrawModal = true" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl font-bold text-xs flex items-center gap-1.5 shadow transition">
+                        <i class="fas fa-paper-plane"></i> Withdraw
+                    </button>
+                </div>
+
+                <!-- Past Requests -->
+                <div v-if="withdrawRequests.length" class="divide-y">
+                    <div v-for="req in withdrawRequests" :key="req.id" class="px-4 py-2.5 flex justify-between items-center">
+                        <div>
+                            <p class="text-xs font-bold text-gray-800">₹{{ req.amount }}</p>
+                            <p class="text-[10px] text-gray-400">{{ formatDate(req.requestedAt) }}</p>
+                            <p class="text-[10px] text-gray-400">UPI: {{ req.upiId }}</p>
+                        </div>
+                        <span :class="{
+                            'bg-yellow-100 text-yellow-700': req.status === 'pending',
+                            'bg-green-100 text-green-700': req.status === 'approved',
+                            'bg-red-100 text-red-700': req.status === 'rejected'
+                        }" class="px-2.5 py-1 rounded-full text-[10px] font-bold capitalize">
+                            <i :class="{
+                                'fas fa-clock': req.status === 'pending',
+                                'fas fa-check-circle': req.status === 'approved',
+                                'fas fa-times-circle': req.status === 'rejected'
+                            }" class="mr-1"></i>{{ req.status }}
                         </span>
                     </div>
                 </div>
+                <div v-else class="px-4 py-3 text-center text-[11px] text-gray-400">No withdrawal requests yet</div>
+            </div>
 
-                <div class="p-3.5 space-y-2 text-xs">
-                    <div class="flex items-center justify-between">
-                        <p class="font-bold text-slate-800"><i class="fas fa-user-circle mr-1.5 text-gray-400 text-sm"></i>{{ order.customerName }}</p>
-                        <a :href="'tel:' + order.customerPhone" class="bg-green-100 hover:bg-green-200 text-green-800 px-2.5 py-1 rounded-lg font-bold flex items-center gap-1 transition">
-                            <i class="fas fa-phone-alt text-[10px]"></i> Call
-                        </a>
+            <!-- Weekly Summary -->
+            <div class="space-y-2">
+                <p class="text-xs font-bold text-gray-500 uppercase tracking-wide"><i class="fas fa-calendar-week mr-1"></i> Recent Deliveries</p>
+                <div v-for="order in recentDeliveredOrders" :key="order.id" class="bg-gray-50 rounded-xl p-3 flex justify-between items-center border">
+                    <div>
+                        <p class="font-mono text-xs font-bold">#{{ getShortId(order.id) }}</p>
+                        <p class="text-[10px] text-gray-500">{{ formatDate(order.deliveredAt || order.date) }}</p>
                     </div>
-                    
-                    <div class="bg-slate-50 p-2.5 rounded-xl border border-dashed text-gray-600">
-                        <p class="text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-0.5"><i class="fas fa-map-marked-alt text-red-500 mr-1"></i> Delivery Address:</p>
-                        <p class="font-medium leading-relaxed select-all">{{ order.customerAddress }}</p>
+                    <div class="text-right">
+                        <p class="font-bold text-green-600">+₹{{ perDeliveryRate }}</p>
+                        <span v-if="order.deliveryPhoto" class="text-[9px] text-purple-500"><i class="fas fa-image"></i> POD</span>
                     </div>
+                </div>
+                <div v-if="recentDeliveredOrders.length === 0" class="text-center py-10 text-gray-400 text-xs">No deliveries yet</div>
+            </div>
+        </main>
 
-                    <div class="flex justify-between items-center bg-gray-50 px-2.5 py-1.5 rounded-lg border text-[11px]">
-                        <span class="text-gray-500 font-medium">Payment Mode:</span>
-                        <span class="font-black text-slate-800"><i class="fas fa-wallet text-[10px] text-blue-500 mr-1"></i>{{ order.paymentMethod || 'COD' }}</span>
+        <!-- ==================== WITHDRAW MODAL ==================== -->
+        <div v-if="showWithdrawModal" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" @click.self="showWithdrawModal = false">
+            <div class="bg-white rounded-2xl w-full max-w-sm shadow-2xl">
+                <div class="bg-gradient-to-r from-indigo-600 to-blue-600 text-white p-4 rounded-t-2xl flex justify-between items-center">
+                    <div>
+                        <h3 class="font-bold text-sm"><i class="fas fa-wallet mr-2"></i>Withdraw Earnings</h3>
+                        <p class="text-[10px] opacity-80 mt-0.5">Request bhejne ke baad admin approve karega</p>
                     </div>
-
-                    <div class="pt-1.5">
-                        <p class="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">Package Items:</p>
-                        <div class="flex flex-wrap gap-1">
-                            <span v-for="it in order.items" class="bg-slate-100 px-2 py-0.5 rounded text-[10px] font-bold text-slate-700">
-                                {{ it.name }} <span class="text-green-600 font-black">x{{ it.quantity }}</span>
-                            </span>
+                    <button @click="showWithdrawModal = false" class="text-white/70 hover:text-white"><i class="fas fa-times text-lg"></i></button>
+                </div>
+                <div class="p-4 space-y-3 text-xs">
+                    <div class="bg-indigo-50 border border-indigo-200 rounded-xl p-3 flex justify-between items-center">
+                        <span class="font-bold text-gray-600">Available Balance</span>
+                        <span class="font-black text-indigo-700 text-lg">₹{{ totalEarnings.toFixed(2) }}</span>
+                    </div>
+                    <div>
+                        <label class="block font-bold text-gray-700 mb-1.5">Withdraw Amount (₹) *</label>
+                        <div class="relative">
+                            <span class="absolute left-3 top-1/2 -translate-y-1/2 text-indigo-500 font-bold">₹</span>
+                            <input type="number" v-model="withdrawAmount" :max="totalEarnings" min="1" placeholder="Enter amount" class="w-full pl-8 pr-3 py-2.5 border rounded-xl outline-none focus:border-indigo-500 font-bold text-indigo-700">
                         </div>
                     </div>
-                    
-                </div>
-
-                <div class="p-3 bg-gray-50/50 border-t flex flex-col gap-2">
-                    <div class="flex justify-between items-center text-xs">
-                        <span class="text-gray-500 font-medium">Amount to Collect:</span>
-                        <span class="text-base font-black text-green-700">₹{{ Number(order.total).toFixed(2) }}</span>
-                    </div>
-                    
-                    <div class="grid grid-cols-1 mt-1">
-                        <label class="text-[9px] font-extrabold text-gray-400 uppercase tracking-wider mb-1">Update Order Status:</label>
-                        <select v-model="order.status" @change="mutateOrderStatus(order)" class="w-full border rounded-xl px-3 py-2 text-xs bg-white font-bold cursor-pointer shadow-sm outline-none focus:ring-1 focus:ring-green-500">
-                            <option value="pending">⏳ Pending (Review Stage)</option>
-                            <option value="confirmed">✅ Confirmed (Packed & Ready)</option>
-                            <option value="shipped">🚚 Shipped (On the Way)</option>
-                            <option value="delivered">🏠 Delivered (Success Drop)</option>
-                            <option value="rejected">❌ Cancelled (Rejected / Return)</option>
-                        </select>
-                    </div>
-                </div>
-
-            </div>
-
-            <div v-if="filteredOrders.length === 0" class="text-center py-20 text-gray-400 text-xs font-semibold bg-gray-50 rounded-2xl border-2 border-dashed">
-                <i class="fas fa-box-open text-4xl mb-2 opacity-30 text-gray-400"></i>
-                <p>No matching orders found.</p>
-            </div>
-        </div>
-
-    </main>
-
-    <footer class="p-4 bg-slate-900 text-center text-[10px] text-gray-500 border-t border-slate-800">
-        &copy; 2026 ShopSwift Logistics Terminal | Only Pending Order Notifications
-    </footer>
-
-    <!-- QR Scanner Modal -->
-    <div v-if="showScanner" class="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4" @click.self="closeScanner">
-        <div class="bg-white rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl">
-            <div class="bg-slate-900 text-white p-3 flex justify-between items-center">
-                <h3 class="text-sm font-bold"><i class="fas fa-qrcode mr-2"></i>Scan Order QR Code</h3>
-                <button @click="closeScanner" class="text-white/70 hover:text-white"><i class="fas fa-times"></i></button>
-            </div>
-            <div class="p-4">
-                <div id="qr-reader" class="w-full"></div>
-                <p class="text-[10px] text-center text-gray-500 mt-3">Position QR code in front of camera</p>
-                <div v-if="scannedOrderId" class="mt-3 p-2 bg-green-50 rounded-lg text-center">
-                    <p class="text-xs font-bold text-green-700">✅ Scanned Order: #{{ scannedOrderId.slice(-6).toUpperCase() }}</p>
-                    <button @click="goToOrder(scannedOrderId)" class="mt-2 bg-green-600 text-white text-xs px-3 py-1.5 rounded-lg font-bold">View Order</button>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Invoice Print Modal -->
-    <div v-if="showInvoiceModal" class="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4" @click.self="closeInvoiceModal">
-        <div class="bg-white rounded-2xl w-full max-w-md shadow-2xl invoice-modal">
-            <div class="bg-slate-900 text-white p-3 flex justify-between items-center rounded-t-2xl">
-                <h3 class="text-sm font-bold"><i class="fas fa-receipt mr-2"></i>Order Invoice</h3>
-                <button @click="closeInvoiceModal" class="text-white/70 hover:text-white"><i class="fas fa-times"></i></button>
-            </div>
-            <div class="p-4 invoice-print-area" id="invoice-print-area">
-                <div class="text-center border-b pb-3 mb-3">
-                    <h2 class="text-xl font-black text-blue-600">ShopSwift</h2>
-                    <p class="text-[10px] text-gray-500">Delivery Invoice / Tax Receipt</p>
-                </div>
-                <div class="space-y-2 text-xs" v-if="currentInvoiceOrder">
-                    <div class="flex justify-between"><span class="text-gray-500">Order ID:</span><span class="font-mono font-bold">#{{ currentInvoiceOrder.id?.slice(-6).toUpperCase() }}</span></div>
-                    <div class="flex justify-between"><span class="text-gray-500">Date:</span><span>{{ formatDate(currentInvoiceOrder.date) }}</span></div>
-                    <div class="border-t my-2"></div>
-                    <div><p class="font-bold text-gray-700">Customer Details</p><p>{{ currentInvoiceOrder.customerName }}</p><p class="text-gray-500">{{ currentInvoiceOrder.customerPhone }}</p><p class="text-gray-500 text-[10px]">{{ currentInvoiceOrder.customerAddress }}</p></div>
-                    <div class="border-t my-2"></div>
-                    <p class="font-bold text-gray-700">Items Ordered:</p>
-                    <div class="space-y-1">
-                        <div v-for="item in currentInvoiceOrder.items" class="flex justify-between text-[11px]">
-                            <span>{{ item.name }} x{{ item.quantity }}</span>
-                            <span class="font-bold">₹{{ (item.price * item.quantity).toFixed(2) }}</span>
+                    <div>
+                        <label class="block font-bold text-gray-700 mb-1.5">UPI ID *</label>
+                        <div class="relative">
+                            <i class="fas fa-at absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs"></i>
+                            <input type="text" v-model="withdrawUPI" placeholder="yourname@upi" class="w-full pl-8 pr-3 py-2.5 border rounded-xl outline-none focus:border-indigo-500">
                         </div>
                     </div>
-                    <div class="border-t my-2"></div>
-                    <div class="flex justify-between font-bold text-sm"><span>Total Amount:</span><span class="text-green-700">₹{{ Number(currentInvoiceOrder.total).toFixed(2) }}</span></div>
-                    <div class="flex justify-between text-[10px]"><span>Payment Method:</span><span>{{ currentInvoiceOrder.paymentMethod || 'COD' }}</span></div>
-                    <div class="border-t my-2"></div>
-                    <div class="text-center text-[9px] text-gray-400 mt-3">
-                        <p>Thank you for shopping with ShopSwift!</p>
-                        <p>For support: support@shopswift.com</p>
-                    </div>
-                    <div class="flex justify-center mt-3">
-                        <canvas :id="'invoice-qr-' + currentInvoiceOrder.id" style="width: 80px; height: 80px;"></canvas>
+                    <div class="flex gap-2 pt-1">
+                        <button @click="showWithdrawModal = false" class="flex-1 bg-gray-100 text-gray-600 py-2.5 rounded-xl font-bold">Cancel</button>
+                        <button @click="submitWithdrawRequest" :disabled="withdrawLoading" class="flex-1 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 text-white py-2.5 rounded-xl font-bold flex items-center justify-center gap-1.5 transition">
+                            <i v-if="withdrawLoading" class="fas fa-circle-notch fa-spin text-xs"></i>
+                            <i v-else class="fas fa-paper-plane text-xs"></i>
+                            {{ withdrawLoading ? 'Sending...' : 'Send Request' }}
+                        </button>
                     </div>
                 </div>
             </div>
-            <div class="p-3 border-t flex gap-2 no-print">
-                <button @click="printInvoicePage" class="flex-1 bg-blue-600 text-white py-2 rounded-xl text-xs font-bold"><i class="fas fa-print mr-1"></i> Print</button>
-                <button @click="closeInvoiceModal" class="flex-1 bg-gray-200 text-gray-700 py-2 rounded-xl text-xs font-bold">Close</button>
+        </div>
+
+        <!-- ==================== CAMERA MODAL FOR PROOF OF DELIVERY ==================== -->
+        <div v-if="cameraActive" class="camera-preview">
+            <div class="bg-black/90 text-white p-3 flex justify-between items-center">
+                <h3 class="text-sm font-bold">📸 Proof of Delivery</h3>
+                <button @click="closeCamera" class="text-white/70"><i class="fas fa-times text-xl"></i></button>
+            </div>
+            <div class="flex-1 relative bg-black flex items-center justify-center">
+                <video ref="video" class="w-full h-auto max-h-[70vh] object-cover" autoplay playsinline muted></video>
+                <div v-if="photoUploading" class="absolute inset-0 bg-black/70 flex flex-col items-center justify-center gap-3">
+                    <div style="width:40px;height:40px;border:3px solid #10b981;border-top-color:transparent;border-radius:50%;animation:spin 0.8s linear infinite;"></div>
+                    <p class="text-white text-sm font-bold">Uploading photo...</p>
+                </div>
+                <canvas ref="canvas" style="display: none;"></canvas>
+            </div>
+            <div class="p-4 bg-black flex gap-3">
+                <button @click="capturePhoto" :disabled="photoUploading" class="flex-1 bg-green-600 disabled:bg-green-400 text-white py-3 rounded-xl font-bold flex items-center justify-center gap-2">
+                    <i :class="photoUploading ? 'fas fa-circle-notch fa-spin' : 'fas fa-camera'"></i>
+                    {{ photoUploading ? 'Uploading...' : 'Capture Photo' }}
+                </button>
+                <button @click="closeCamera" class="flex-1 bg-red-600 text-white py-3 rounded-xl font-bold">Cancel</button>
             </div>
         </div>
-    </div>
+
+        <!-- QR Scanner Modal -->
+        <div v-if="showScanner" class="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4" @click.self="closeScanner">
+            <div class="bg-white rounded-2xl w-full max-w-sm overflow-hidden">
+                <div class="bg-slate-900 text-white p-3 flex justify-between items-center">
+                    <h3 class="text-sm font-bold"><i class="fas fa-qrcode mr-2 text-green-400"></i>QR Scanner</h3>
+                    <button @click="closeScanner" class="text-white/70 text-lg">&times;</button>
+                </div>
+                <!-- Scan Mode Toggle -->
+                <div class="flex border-b">
+                    <button @click="scanMode='order'" :class="scanMode==='order' ? 'border-b-2 border-green-500 text-green-700 font-bold bg-green-50' : 'text-gray-500'" class="flex-1 py-2.5 text-[11px] font-semibold transition">
+                        <i class="fas fa-clipboard-list mr-1"></i> Order ID
+                    </button>
+                    <button @click="scanMode='product'" :class="scanMode==='product' ? 'border-b-2 border-indigo-500 text-indigo-700 font-bold bg-indigo-50' : 'text-gray-500'" class="flex-1 py-2.5 text-[11px] font-semibold transition">
+                        <i class="fas fa-box mr-1"></i> Product QR
+                    </button>
+                </div>
+                <!-- Scan Result Banner -->
+                <div v-if="scanResult" class="mx-3 mt-3 rounded-xl p-2.5 text-xs font-semibold flex items-center gap-2"
+                    :class="scanResult.success ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-600 border border-red-200'">
+                    <i :class="scanResult.success ? 'fas fa-check-circle' : 'fas fa-times-circle'"></i>
+                    {{ scanResult.message }}
+                </div>
+                <div class="p-3">
+                    <div id="qr-reader" class="w-full rounded-xl overflow-hidden"></div>
+                    <p class="text-[10px] text-center text-gray-400 mt-2">
+                        <span v-if="scanMode==='order'">📦 Order QR ya Invoice QR scan karein</span>
+                        <span v-else>🏷️ Product ka QR Code scan karein</span>
+                    </p>
+                </div>
+                <!-- Product Scan Result Card -->
+                <div v-if="scannedProduct" class="mx-3 mb-3 bg-indigo-50 rounded-xl p-3 border border-indigo-200">
+                    <p class="text-[10px] font-bold text-indigo-600 mb-2"><i class="fas fa-box mr-1"></i> Product Found</p>
+                    <div class="flex gap-3 items-center">
+                        <img :src="scannedProduct.image || 'https://placehold.co/48x48?text=📦'" class="w-12 h-12 rounded-xl object-contain bg-white border">
+                        <div class="flex-1">
+                            <div class="font-bold text-gray-800 text-sm">{{ scannedProduct.name }}</div>
+                            <div class="text-[10px] text-gray-500">{{ scannedProduct.category }}</div>
+                            <div class="font-black text-indigo-700 text-sm">₹{{ scannedProduct.price }}</div>
+                        </div>
+                    </div>
+                    <div class="mt-2 grid grid-cols-2 gap-1.5 text-[10px]">
+                        <div class="bg-white rounded-lg p-1.5 text-center">
+                            <div class="font-bold" :class="scannedProduct.stockStatus === 'In stock' ? 'text-green-600' : 'text-red-500'">
+                                {{ scannedProduct.stockStatus || 'In stock' }}
+                            </div>
+                            <div class="text-gray-400">Status</div>
+                        </div>
+                        <div class="bg-white rounded-lg p-1.5 text-center">
+                            <div class="font-bold text-gray-800">{{ scannedProduct.stockQuantity || 0 }}</div>
+                            <div class="text-gray-400">Stock</div>
+                        </div>
+                    </div>
+                    <p class="text-[9px] text-gray-400 mt-1.5 font-mono text-center">ID: {{ scannedProduct.id?.slice(-12).toUpperCase() }}</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Invoice Modal -->
+        <div v-if="showInvoiceModal" class="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4" @click.self="closeInvoiceModal">
+            <div class="bg-white rounded-2xl w-full max-w-md shadow-2xl invoice-modal">
+                <div class="bg-slate-900 text-white p-3 flex justify-between rounded-t-2xl">
+                    <h3 class="text-sm font-bold">Invoice</h3>
+                    <button @click="closeInvoiceModal"><i class="fas fa-times"></i></button>
+                </div>
+                <div class="p-4 invoice-print-area" id="invoice-print-area">
+                    <div class="text-center border-b pb-3">
+                        <h2 class="text-xl font-black text-blue-600">Pinkkart</h2>
+                        <p class="text-[10px] text-gray-500">Delivery Invoice</p>
+                    </div>
+                    <div class="space-y-2 text-xs" v-if="currentInvoiceOrder">
+                        <div class="flex justify-between"><span class="text-gray-500">Order ID:</span><span class="font-mono font-bold">#{{ getShortId(currentInvoiceOrder.id) }}</span></div>
+                        <div class="border-t my-2"></div>
+                        <div><p class="font-bold">Customer: {{ currentInvoiceOrder.customerName }}</p><p class="text-gray-500">{{ currentInvoiceOrder.customerPhone }}</p><p class="text-[10px]">{{ currentInvoiceOrder.customerAddress }}</p></div>
+                        <div class="border-t my-2"></div>
+                        <p class="font-bold">Items:</p>
+                        <div v-for="item in currentInvoiceOrder.items" class="flex justify-between text-[11px]"><span>{{ item.name }} x{{ item.quantity }}</span><span>₹{{ (item.price * item.quantity).toFixed(2) }}</span></div>
+                        <div class="border-t my-2"></div>
+                        <div class="flex justify-between font-bold"><span>Total:</span><span class="text-green-700">₹{{ Number(currentInvoiceOrder.total).toFixed(2) }}</span></div>
+                        <div class="text-center text-[9px] text-gray-400 mt-3">Delivered by: {{ loggedInRider.name }}</div>
+                    </div>
+                </div>
+                <div class="p-3 border-t flex gap-2">
+                    <button @click="printInvoicePage" class="flex-1 bg-blue-600 text-white py-2 rounded-xl text-xs font-bold">Print</button>
+                    <button @click="closeInvoiceModal" class="flex-1 bg-gray-200 py-2 rounded-xl text-xs font-bold">Close</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Floating QR Scan Button -->
+        <button @click="openQRScanner" class="fixed bottom-20 right-4 bg-green-600 text-white w-12 h-12 rounded-full shadow-lg flex items-center justify-center text-xl z-30">
+            <i class="fas fa-qrcode"></i>
+        </button>
+
+    </template>
 </div>
 
 <script>
-// Firebase Configuration
 const firebaseConfig = {
     apiKey: "AIzaSyDbVF9_RqXDXdIASOy2WgbwSmwuiowu2Bg",
     authDomain: "growthxpressx.firebaseapp.com",
@@ -340,333 +589,527 @@ const firebaseConfig = {
 
 firebase.initializeApp(firebaseConfig);
 const database = firebase.database();
+const storage = firebase.storage();
+const auth = firebase.auth();
 
-// QR Code Generator Helper
-function generateQRCode(elementId, text, size = 100) {
-    const canvas = document.getElementById(elementId);
-    if (!canvas) return;
-    const QRCodeLib = window.QRCode;
-    if (QRCodeLib) {
-        canvas.innerHTML = '';
-        new QRCodeLib(canvas, {
-            text: text,
-            width: size,
-            height: size,
-            colorDark: "#000000",
-            colorLight: "#ffffff",
-            correctLevel: QRCodeLib.CorrectLevel.H
-        });
-    }
-}
-
-function loadQRCodeLib() {
-    return new Promise((resolve) => {
-        if (window.QRCode) { resolve(); return; }
-        const script = document.createElement('script');
-        script.src = "https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js";
-        script.onload = () => resolve();
-        document.head.appendChild(script);
-    });
+function generateQRCode(containerId, text, size = 80) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    container.innerHTML = '';
+    new QRCode(container, { text: text, width: size, height: size, colorDark: "#000000", colorLight: "#ffffff" });
 }
 
 new Vue({
     el: '#app',
     data: {
+        loggedInRider: null,
+        authLoading: false,
+        loginForm: { email: '', password: '' },
+        loginError: '',
+        showLoginPassword: false,
+        activeTab: 'orders',
+        
         orders: [],
         orderSearch: '',
         orderStatusFilter: 'all',
+        
+        perDeliveryRate: 40,
+        
         showScanner: false,
-        showInvoiceModal: false,
-        showNotifications: false,
-        currentInvoiceOrder: null,
-        scannedOrderId: null,
         html5QrCode: null,
-        scanProgress: { show: false, percent: 0, message: '' },
-        notifications: [],
-        previousOrdersSnapshot: []
+        scanMode: 'order',
+        scanResult: null,
+        scannedProduct: null,
+        
+        showInvoiceModal: false,
+        currentInvoiceOrder: null,
+        
+        cameraActive: false,
+        currentOrderForPhoto: null,
+        stream: null,
+        photoUploading: false,
+        showWithdrawModal: false,
+        withdrawAmount: '',
+        withdrawUPI: '',
+        withdrawLoading: false,
+        withdrawRequests: []
     },
     computed: {
         filteredOrders() {
             let filtered = this.orders;
             if (this.orderStatusFilter !== 'all') {
-                filtered = filtered.filter(o => o.status === this.orderStatusFilter);
+                // 'cancelled' filter mein 'rejected' bhi include karo
+                if (this.orderStatusFilter === 'cancelled') {
+                    filtered = filtered.filter(o => o.status === 'cancelled' || o.status === 'rejected');
+                } else {
+                    filtered = filtered.filter(o => o.status === this.orderStatusFilter);
+                }
             }
             if (this.orderSearch) {
-                const query = this.orderSearch.toLowerCase();
+                const q = this.orderSearch.toLowerCase();
                 filtered = filtered.filter(o => 
-                    (o.id && o.id.toLowerCase().includes(query)) ||
-                    (o.customerName && o.customerName.toLowerCase().includes(query)) ||
-                    (o.customerPhone && o.customerPhone.includes(query)) ||
-                    (o.customerAddress && o.customerAddress.toLowerCase().includes(query))
+                    this.getShortId(o.id).toLowerCase().includes(q) ||
+                    (o.customerName && o.customerName.toLowerCase().includes(q)) ||
+                    (o.customerPhone && o.customerPhone.includes(q)) ||
+                    (o.items && o.items.some(i => i.name && i.name.toLowerCase().includes(q)))
                 );
             }
             return filtered;
         },
-        unreadNotificationsCount() {
-            return this.notifications.filter(n => !n.read).length;
-        },
-        todayPickup() {
-            const today = new Date().toDateString();
+        deliveredOrders() {
+            // Sirf woh delivered orders jo mujhe assign thi ya maine deliver ki
             return this.orders.filter(o =>
-                o.shippedAt &&
-                new Date(o.shippedAt).toDateString() === today
-            ).length;
+                o.status === 'delivered' && (
+                    o.assignedRider === this.loggedInRider?.id ||
+                    o.assignedRiderPhone === this.loggedInRider?.phone ||
+                    (o.deliveryBoyDetails && o.deliveryBoyDetails.phone === this.loggedInRider?.phone)
+                )
+            );
         },
-        todayDelivered() {
+        recentDeliveredOrders() {
+            return [...this.deliveredOrders].reverse().slice(0, 20);
+        },
+        totalWithdrawn() {
+            return this.withdrawRequests
+                .filter(r => r.status === 'approved')
+                .reduce((sum, r) => sum + (parseFloat(r.amount) || 0), 0);
+        },
+        totalGrossEarnings() {
+            // Total kamai — har delivered order ke liye rate
+            return this.deliveredOrders.length * this.perDeliveryRate;
+        },
+        totalEarnings() {
+            // Available balance = Total kamai - Withdrawn
+            return Math.max(0, this.totalGrossEarnings - this.totalWithdrawn);
+        },
+        todayDeliveredCount() {
             const today = new Date().toDateString();
-            return this.orders.filter(o =>
-                o.deliveredAt &&
-                new Date(o.deliveredAt).toDateString() === today
-            ).length;
+            return this.deliveredOrders.filter(o => o.deliveredAt && new Date(o.deliveredAt).toDateString() === today).length;
         },
-        totalPending() {
-            return this.orders.filter(o => o.status === 'pending').length;
+        todayEarnings() {
+            return this.todayDeliveredCount * this.perDeliveryRate;
         }
     },
     methods: {
-        showToast(message) {
-            const toast = document.getElementById('toast');
-            document.getElementById('toastMsg').innerText = message;
-            toast.classList.add('show');
-            setTimeout(() => toast.classList.remove('show'), 2000);
-        },
+        getShortId(fullId) { return fullId ? fullId.slice(-8).toUpperCase() : ''; },
+        showToast(msg) { const t = document.getElementById('toast'); document.getElementById('toastMsg').innerText = msg; t.classList.add('show'); setTimeout(() => t.classList.remove('show'), 2500); },
         
-        // Add in-app notification entry ONLY for pending orders
-        addPendingOrderNotification(title, message, orderId) {
-            const newNotif = {
-                id: Date.now(),
-                title: title,
-                message: message,
-                type: 'pending_order',
-                orderId: orderId,
-                timestamp: new Date().toISOString(),
-                read: false
-            };
-            this.notifications.unshift(newNotif);
-            if (this.notifications.length > 50) this.notifications.pop();
-            localStorage.setItem('rider_notifications', JSON.stringify(this.notifications));
-        },
-        
-        markAsRead(notif) {
-            notif.read = true;
-            localStorage.setItem('rider_notifications', JSON.stringify(this.notifications));
-        },
-        
-        markAllAsRead() {
-            this.notifications.forEach(n => n.read = true);
-            localStorage.setItem('rider_notifications', JSON.stringify(this.notifications));
-        },
-        
-        toggleNotificationPanel() {
-            this.showNotifications = !this.showNotifications;
-        },
-        
-        formatTime(isoString) {
-            if (!isoString) return '';
-            const date = new Date(isoString);
-            const now = new Date();
-            const diffMs = now - date;
-            const diffMins = Math.floor(diffMs / 60000);
-            if (diffMins < 1) return 'Just now';
-            if (diffMins < 60) return `${diffMins} min ago`;
-            if (diffMins < 1440) return `${Math.floor(diffMins / 60)} hours ago`;
-            return date.toLocaleDateString();
-        },
-        
-        // Detect new orders — push notification + in-app ONLY for pending orders
-        checkForNewOrders() {
-            const currentIds = this.orders.map(o => o.id);
-            const previousIds = this.previousOrdersSnapshot;
-            const newOrders = this.orders.filter(o => !previousIds.includes(o.id));
-            newOrders.forEach(order => {
-                if (order.status === 'pending') {
-                    const title = '🆕 New Pending Order!';
-                    const message = `Order #${order.id.slice(-6)} from ${order.customerName} is pending for delivery.`;
-                    // In-app bell notification only
-                    this.addPendingOrderNotification(title, message, order.id);
-                    this.showToast(`📦 New pending order #${order.id.slice(-6)} received!`);
-                }
-                // No notification for any other status
-            });
-            this.previousOrdersSnapshot = currentIds;
-        },
-        
-        showScanProgress(percent, message) {
-            this.scanProgress = { show: true, percent: percent, message: message };
-            if (percent >= 100) {
-                setTimeout(() => { this.scanProgress.show = false; }, 3000);
+        handleRiderLogin() {
+            if (!this.loginForm.email || !this.loginForm.password) {
+                this.loginError = 'Email aur password dono zaroori hain';
+                return;
             }
+            this.loginError = '';
+            this.authLoading = true;
+
+            auth.signInWithEmailAndPassword(this.loginForm.email.trim(), this.loginForm.password)
+                .then(async (userCredential) => {
+                    const user = userCredential.user;
+                    // Firebase Auth success — ab riders DB se rider info fetch karo
+                    const snap = await database.ref('riders').once('value');
+                    let matched = null;
+                    snap.forEach(c => {
+                        const v = c.val();
+                        // Email se match karo (riders node mein email field honi chahiye)
+                        if (v.email && v.email.toLowerCase() === user.email.toLowerCase()) {
+                            matched = { id: c.key, name: v.name, phone: v.phone || '', email: v.email };
+                        }
+                    });
+                    this.authLoading = false;
+                    if (matched) {
+                        this.loggedInRider = matched;
+                        localStorage.setItem('sw_rider_session', JSON.stringify(matched));
+                        this.loadOrders();
+                        this.loadPerDeliveryRate();
+                        this.loadWithdrawRequests();
+                        database.ref('orders').on('value', () => this.loadOrders());
+                    } else {
+                        // Auth toh hua par rider record nahi mila
+                        auth.signOut();
+                        this.loginError = 'Aapka rider account nahi mila. Admin se contact karein.';
+                    }
+                })
+                .catch((error) => {
+                    this.authLoading = false;
+                    if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
+                        this.loginError = 'Email ya Password galat hai!';
+                    } else if (error.code === 'auth/invalid-email') {
+                        this.loginError = 'Valid email address enter karein.';
+                    } else if (error.code === 'auth/too-many-requests') {
+                        this.loginError = 'Bahut zyada attempts. Thodi der baad try karein.';
+                    } else {
+                        this.loginError = error.message;
+                    }
+                });
+        },
+        
+        async loadOrders() {
+            if (!this.loggedInRider) return;
+            const snap = await database.ref('orders').once('value');
+            const data = snap.val();
+            const allOrders = data ? Object.keys(data).map(k => ({ id: k, ...data[k] })) : [];
+
+            this.orders = allOrders.filter(o => {
+                const isAssignedToMe =
+                    o.assignedRider === this.loggedInRider.id ||
+                    o.assignedRiderPhone === this.loggedInRider.phone ||
+                    (o.deliveryBoyDetails && o.deliveryBoyDetails.phone === this.loggedInRider.phone);
+
+                // Naye active orders jo kisi ko assign nahi hue — pending/confirmed
+                const isNewUnassigned =
+                    !o.assignedRider && !o.assignedRiderPhone &&
+                    (o.status === 'pending' || o.status === 'confirmed');
+
+                // Cancelled/rejected orders jo rider ne cancel kiye ya usse related the
+                const isCancelledRelatedToMe =
+                    (o.status === 'cancelled' || o.status === 'rejected') && (
+                        o.cancelledBy === 'rider' ||
+                        o.assignedRider === this.loggedInRider.id ||
+                        o.assignedRiderPhone === this.loggedInRider.phone ||
+                        (o.deliveryBoyDetails && o.deliveryBoyDetails.phone === this.loggedInRider.phone)
+                    );
+
+                return isAssignedToMe || isNewUnassigned || isCancelledRelatedToMe;
+            }).reverse();
+        },
+        
+        loadPerDeliveryRate() {
+            database.ref('admin_settings/per_delivery_rate').on('value', snap => {
+                if (snap.exists()) this.perDeliveryRate = snap.val();
+            });
+        },
+
+        async loadWithdrawRequests() {
+            if (!this.loggedInRider) return;
+            database.ref('withdrawal_requests').orderByChild('riderId').equalTo(this.loggedInRider.id).on('value', snap => {
+                const d = snap.val();
+                this.withdrawRequests = d ? Object.keys(d).map(k => ({ id: k, ...d[k] })).reverse() : [];
+            });
+        },
+
+        async submitWithdrawRequest() {
+            if (!this.withdrawAmount || parseFloat(this.withdrawAmount) <= 0) { this.showToast('Valid amount enter karein'); return; }
+            if (!this.withdrawUPI.trim()) { this.showToast('UPI ID required hai'); return; }
+            if (parseFloat(this.withdrawAmount) > this.totalEarnings) { this.showToast('Amount available balance se zyada hai'); return; }
+            this.withdrawLoading = true;
+            try {
+                await database.ref('withdrawal_requests').push({
+                    riderId: this.loggedInRider.id,
+                    riderName: this.loggedInRider.name,
+                    riderPhone: this.loggedInRider.phone,
+                    amount: parseFloat(this.withdrawAmount),
+                    upiId: this.withdrawUPI.trim(),
+                    status: 'pending',
+                    requestedAt: new Date().toISOString()
+                });
+                this.showToast('✅ Withdraw request bhej diya! Admin approve karega.');
+                this.showWithdrawModal = false;
+                this.withdrawAmount = '';
+                this.withdrawUPI = '';
+            } catch(e) { this.showToast('Error: ' + e.message); }
+            finally { this.withdrawLoading = false; }
         },
         
         async mutateOrderStatus(order) {
+            if (order.status === 'cancelled') return; // Prevent direct dropdown cancel
+            // 🔒 Online payment — Admin approval required
+            if (order.paymentMethod === "ONLINE" && !order.paymentApprovedByAdmin) {
+                this.showToast("🔒 Admin ne abhi payment approve nahi ki. Thoda wait karein.");
+                return;
+            }
+            if (order.status === 'delivered' && !order.deliveryPhoto) {
+                this.showToast('📸 Photo lena zaroori hai! Camera khul raha hai...');
+                order.status = 'shipped';
+                await this.$nextTick();
+                order.status = 'delivered';
+                setTimeout(() => this.openCameraForOrder(order), 600);
+                return;
+            }
             try {
                 const now = new Date().toISOString();
-                const payload = {
-                    status: order.status,
-                    riderTimestamp: now
+                const payload = { 
+                    status: order.status, 
+                    riderTimestamp: now,
+                    assignedRider: this.loggedInRider.id,
+                    assignedRiderName: this.loggedInRider.name,
+                    assignedRiderPhone: this.loggedInRider.phone
                 };
-                // Save shippedAt when marked as shipped (today pickup tracking)
-                if (order.status === 'shipped') {
-                    payload.shippedAt = now;
-                }
-                // Save deliveredAt when marked as delivered (today delivered tracking)
+                if (order.status === 'shipped') payload.shippedAt = now;
                 if (order.status === 'delivered') {
                     payload.deliveredAt = now;
+                    payload.deliveryBoyDetails = { riderId: this.loggedInRider.id, name: this.loggedInRider.name, phone: this.loggedInRider.phone };
                 }
                 await database.ref(`orders/${order.id}`).update(payload);
-                this.showToast(`Order Status: ${this.getStatusText(order.status)}`);
-            } catch(error) {
-                this.showToast('Sync Error: ' + error.message);
+                this.showToast(`✅ Status: ${this.getStatusText(order.status)}`);
+            } catch(e) { this.showToast('Error: ' + e.message); }
+        },
+        
+        // Camera & Proof of Delivery
+        async openCameraForOrder(order) {
+            this.currentOrderForPhoto = order;
+            this.cameraActive = true;
+            await this.$nextTick();
+            try {
+                this.stream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
+                    audio: false
+                });
+                const video = this.$refs.video;
+                if (video) {
+                    video.srcObject = this.stream;
+                    await video.play().catch(() => {});
+                }
+            } catch(e) {
+                try {
+                    this.stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+                    const video = this.$refs.video;
+                    if (video) { video.srcObject = this.stream; await video.play().catch(() => {}); }
+                } catch(e2) { this.showToast('Camera access denied: ' + e2.message); this.cameraActive = false; }
             }
         },
         
-        async printInvoice(order) {
+        async capturePhoto() {
+            const video = this.$refs.video;
+            const canvas = this.$refs.canvas;
+            if (!video || !canvas || !this.currentOrderForPhoto) return;
+            if (this.photoUploading) return;
+            
+            const w = video.videoWidth || 640;
+            const h = video.videoHeight || 480;
+            canvas.width = w;
+            canvas.height = h;
+            canvas.getContext('2d').drawImage(video, 0, 0, w, h);
+            
+            const base64 = canvas.toDataURL('image/jpeg', 0.85).split(',')[1];
+            if (!base64) { this.showToast('Photo capture failed, try again'); return; }
+            
+            this.photoUploading = true;
+            try {
+                const fd = new FormData();
+                fd.append('key', '9b6ea4121e0281d6911d13eaf8d59c86');
+                fd.append('image', base64);
+
+                // 15-second timeout: agar upload na ho toh abort kar do
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 15000);
+
+                let res;
+                try {
+                    res = await fetch('https://api.imgbb.com/1/upload', {
+                        method: 'POST',
+                        body: fd,
+                        signal: controller.signal
+                    });
+                } finally {
+                    clearTimeout(timeoutId);
+                }
+
+                const result = await res.json();
+                if (result.success) {
+                    await database.ref(`orders/${this.currentOrderForPhoto.id}`).update({
+                        deliveryPhoto: result.data.url,
+                        deliveryPhotoTime: new Date().toISOString()
+                    });
+                    this.showToast('✅ Proof of delivery saved!');
+                    this.closeCamera();
+                    await this.loadOrders();
+                } else {
+                    this.showToast('Upload failed: ' + (result.error && result.error.message || 'Try again'));
+                }
+            } catch(e) {
+                if (e.name === 'AbortError') {
+                    this.showToast('⚠️ Network slow hai, please dubara try karein!');
+                } else {
+                    this.showToast('Upload error: ' + e.message);
+                }
+            } finally {
+                this.photoUploading = false;
+            }
+        },
+        
+        closeCamera() {
+            if (this.stream) {
+                this.stream.getTracks().forEach(track => track.stop());
+                this.stream = null;
+            }
+            this.cameraActive = false;
+            this.currentOrderForPhoto = null;
+        },
+        
+        // QR Scanner
+        async openQRScanner() {
+            this.showScanner = true;
+            this.scanResult = null;
+            this.scannedProduct = null;
+            await this.$nextTick();
+            if (this.html5QrCode) try { await this.html5QrCode.stop(); } catch(e) {}
+            this.html5QrCode = new Html5Qrcode("qr-reader");
+            try {
+                await this.html5QrCode.start({ facingMode: "environment" }, { fps: 10, qrbox: { width: 240, height: 240 } },
+                    (decoded) => {
+                        if (this.scanMode === 'product') {
+                            // Product QR format: ID:{id}|NAME:{name}|PRICE:{price}
+                            this.handleProductScan(decoded);
+                        } else {
+                            // Order QR scan
+                            this.handleOrderScan(decoded);
+                        }
+                    }, () => {});
+            } catch(e) { this.showToast('Camera access denied'); }
+        },
+
+        handleOrderScan(decoded) {
+            let shortId = null;
+            if (decoded.includes('ORDER:')) shortId = decoded.split('ORDER:')[1].split('|')[0];
+            else shortId = decoded.slice(-8).toUpperCase();
+            const matched = this.orders.find(o => this.getShortId(o.id) === shortId);
+            if (matched) {
+                this.scanResult = { success: true, message: `✅ Order #${shortId} mila!` };
+                this.closeScanner();
+                setTimeout(() => {
+                    this.orderSearch = shortId;
+                    this.orderStatusFilter = 'all';
+                    this.activeTab = 'orders';
+                }, 400);
+            } else {
+                this.scanResult = { success: false, message: `❌ Order #${shortId} nahi mila` };
+                this.showToast('Order not found');
+            }
+        },
+
+        handleProductScan(decoded) {
+            this.scannedProduct = null;
+            this.scanResult = null;
+            let productId = null;
+            let productName = null;
+
+            // Format 1: ID:{id}|NAME:{name}|PRICE:{price}  (Dukandar panel QR)
+            if (decoded.includes('ID:') && decoded.includes('NAME:')) {
+                productId = decoded.split('ID:')[1]?.split('|')[0]?.trim();
+                productName = decoded.split('NAME:')[1]?.split('|')[0]?.trim();
+            }
+            // Format 2: plain product id or name
+            else {
+                productId = decoded.trim();
+                productName = decoded.trim();
+            }
+
+            // Search by ID first, then by name
+            let found = null;
+            if (productId) found = this.orders.flatMap(o => o.items || []).find(i => i.id === productId || i.id?.includes(productId));
+            if (!found && productName) {
+                const nameLower = productName.toLowerCase();
+                found = this.orders.flatMap(o => o.items || []).find(i => i.name?.toLowerCase().includes(nameLower));
+            }
+
+            // Also search directly in orders for matching product
+            let matchedOrders = [];
+            if (productId || productName) {
+                matchedOrders = this.orders.filter(o =>
+                    o.items?.some(i =>
+                        (productId && (i.id === productId || i.id?.slice(-12).toUpperCase() === productId?.toUpperCase())) ||
+                        (productName && i.name?.toLowerCase().includes(productName.toLowerCase()))
+                    )
+                );
+            }
+
+            if (matchedOrders.length > 0) {
+                const item = matchedOrders[0].items?.find(i =>
+                    (productId && (i.id === productId || i.id?.slice(-12).toUpperCase() === productId?.toUpperCase())) ||
+                    (productName && i.name?.toLowerCase().includes(productName.toLowerCase()))
+                );
+                this.scannedProduct = {
+                    id: item?.id || productId,
+                    name: item?.name || productName,
+                    price: item?.price || '',
+                    category: item?.category || '',
+                    image: item?.image || '',
+                    stockStatus: 'In stock',
+                    stockQuantity: item?.stockQuantity || 0
+                };
+                this.scanResult = { success: true, message: `✅ "${item?.name || productName}" — ${matchedOrders.length} order(s) mila` };
+                // Show orders containing this product
+                setTimeout(() => {
+                    this.orderSearch = item?.name || productName || '';
+                    this.orderStatusFilter = 'all';
+                    this.activeTab = 'orders';
+                    this.closeScanner();
+                }, 2500);
+            } else {
+                this.scanResult = { success: false, message: `❌ Is product ka koi order nahi mila` };
+                this.showToast('Product orders not found');
+            }
+        },
+
+        closeScanner() {
+            if (this.html5QrCode) this.html5QrCode.stop().catch(() => {});
+            this.showScanner = false;
+            this.scanResult = null;
+            this.scannedProduct = null;
+        },
+        
+        printInvoice(order) {
             this.currentInvoiceOrder = order;
             this.showInvoiceModal = true;
-            await this.$nextTick();
-            if (order && order.id) {
-                generateQRCode(`invoice-qr-${order.id}`, `ORDER:${order.id}|${order.customerPhone}`, 80);
-            }
         },
-        
         printInvoicePage() { window.print(); },
         closeInvoiceModal() { this.showInvoiceModal = false; this.currentInvoiceOrder = null; },
         
-        async openQRScanner() {
-            this.showScanner = true;
-            this.scannedOrderId = null;
-            await this.$nextTick();
-            this.startQRScanner();
-        },
-        
-        async startQRScanner() {
-            const qrReaderId = "qr-reader";
-            if (this.html5QrCode) {
-                try { await this.html5QrCode.stop(); } catch(e) {}
-            }
-            this.html5QrCode = new Html5Qrcode(qrReaderId);
-            const config = { fps: 10, qrbox: { width: 250, height: 250 } };
+        async cancelOrder(order) {
+            const reason = prompt('Order cancel karne ka karan batayein (optional):');
+            if (reason === null) return; // User pressed Cancel on prompt
+            const confirmed = confirm(`Order #${this.getShortId(order.id)} cancel karna chahte hain?`);
+            if (!confirmed) return;
             try {
-                await this.html5QrCode.start({ facingMode: "environment" }, config, (decodedText) => {
-                    this.handleQRScan(decodedText);
-                }, (error) => {});
-            } catch(err) { this.showToast("Camera error: " + err); }
-        },
-        
-        handleQRScan(decodedText) {
-            let progress = 0;
-            const interval = setInterval(() => {
-                progress += 10;
-                this.showScanProgress(progress, 'Verifying QR Code...');
-                if (progress >= 100) clearInterval(interval);
-            }, 80);
-            
-            let orderId = null;
-            if (decodedText.includes('ORDER:')) {
-                orderId = decodedText.split('ORDER:')[1].split('|')[0];
-            } else if (decodedText.length > 10 && decodedText.match(/^[a-zA-Z0-9\-]+$/)) {
-                orderId = decodedText;
-            } else {
-                try { const parsed = JSON.parse(decodedText); orderId = parsed.orderId || parsed.id; } catch(e) { orderId = decodedText; }
-            }
-            
-            setTimeout(() => {
-                clearInterval(interval);
-                this.scanProgress.show = false;
-                if (orderId && this.orders.find(o => o.id === orderId)) {
-                    this.scannedOrderId = orderId;
-                    this.showToast(`✅ Order #${orderId.slice(-6)} found!`);
-                    this.closeScanner();
-                    setTimeout(() => { this.goToOrder(orderId); }, 500);
-                } else {
-                    this.showToast("❌ Invalid QR or order not found");
-                }
-            }, 1000);
-        },
-        
-        goToOrder(orderId) {
-            const order = this.orders.find(o => o.id === orderId);
-            if (order) {
-                this.orderSearch = order.id.slice(-6);
-                this.orderStatusFilter = 'all';
-                this.$nextTick(() => {
-                    const el = document.querySelector(`[data-order-id="${orderId}"]`);
-                    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                await database.ref(`orders/${order.id}`).update({
+                    status: 'cancelled',
+                    cancelledAt: new Date().toISOString(),
+                    cancelledBy: 'rider',
+                    cancelledByName: this.loggedInRider.name,
+                    cancelledByPhone: this.loggedInRider.phone,
+                    cancelReason: reason ? reason.trim() : 'Rider ne cancel kiya'
                 });
-                this.showToast(`📍 Order #${orderId.slice(-6)} located`);
-                this.showNotifications = false;
-            } else {
-                this.showToast("Order not found");
+                await this.loadOrders(); // UI mein turant cancel status dikhao
+                this.showToast(`❌ Order #${this.getShortId(order.id)} cancel ho gaya`);
+            } catch(e) { this.showToast('Error: ' + e.message); }
+        },
+        
+        handleRiderLogout() {
+            if (confirm('Logout?')) {
+                if (this.html5QrCode) this.html5QrCode.stop().catch(() => {});
+                auth.signOut().catch(() => {});
+                localStorage.removeItem('sw_rider_session');
+                this.loggedInRider = null;
+                this.orders = [];
             }
         },
         
-        closeScanner() {
-            if (this.html5QrCode) { this.html5QrCode.stop().catch(e => console.log(e)); }
-            this.showScanner = false;
-            this.scannedOrderId = null;
-        },
-        
-        loadOrdersRealtimeStream() {
-            database.ref('orders').on('value', async (snapshot) => {
-                const data = snapshot.val();
-                if (data) {
-                    this.orders = Object.keys(data).map(key => ({
-                        id: key,
-                        ...data[key]
-                    })).reverse();
-                    
-                    await this.$nextTick();
-                    await loadQRCodeLib();
-                    this.orders.forEach(order => {
-                        const qrText = `ORDER:${order.id}|${order.customerPhone}`;
-                        generateQRCode(`qr-canvas-${order.id}`, qrText, 60);
-                    });
-                    this.checkForNewOrders();
-                } else {
-                    this.orders = [];
-                }
-            });
-        },
-        
-        getBorderClass(status) {
-            const map = { pending: 'border-yellow-400', confirmed: 'border-blue-400', shipped: 'border-purple-400', delivered: 'border-green-400', rejected: 'border-red-400' };
-            return map[status] || 'border-gray-200';
-        },
-        getStatusBadgeClass(status) {
-            const map = { pending: 'bg-yellow-100 text-yellow-700', confirmed: 'bg-blue-100 text-blue-700', shipped: 'bg-purple-100 text-purple-700', delivered: 'bg-green-100 text-green-700', rejected: 'bg-red-100 text-red-700' };
-            return map[status] || 'bg-gray-100 text-gray-700';
-        },
-        getStatusText(status) {
-            const map = { pending: 'Pending', confirmed: 'Confirmed', shipped: 'Shipped', delivered: 'Delivered', rejected: 'Cancelled' };
-            return map[status] || status;
-        },
-        formatDate(isoString) {
-            if (!isoString) return '';
-            return new Date(isoString).toLocaleDateString('en-IN', {
-                day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit'
-            });
-        },
-        
-        loadSavedNotifications() {
-            const saved = localStorage.getItem('rider_notifications');
-            if (saved) {
-                try { this.notifications = JSON.parse(saved); } catch(e) {}
-            }
-        }
+        getBorderClass(s) { return { pending:'border-yellow-400', confirmed:'border-blue-400', shipped:'border-purple-400', delivered:'border-green-400', cancelled:'border-red-400', rejected:'border-red-400' }[s] || 'border-gray-200'; },
+        getStatusBadgeClass(s) { return { pending:'bg-yellow-100 text-yellow-700', confirmed:'bg-blue-100 text-blue-700', shipped:'bg-purple-100 text-purple-700', delivered:'bg-green-100 text-green-700', cancelled:'bg-red-100 text-red-700', rejected:'bg-red-100 text-red-700' }[s] || 'bg-gray-100'; },
+        getStatusText(s) { return { pending:'Pending', confirmed:'Order Confirmed', shipped:'Out for Delivery', delivered:'Delivered', cancelled:'Cancelled', rejected:'Cancelled' }[s] || s; },
+        formatDate(iso) { return iso ? new Date(iso).toLocaleString('en-IN', { day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' }) : ''; }
     },
-    async mounted() {
-        this.loadSavedNotifications();
-        await loadQRCodeLib();
-        this.loadOrdersRealtimeStream();
-        // Click outside to close notification panel
-        document.addEventListener('click', (e) => {
-            if (!e.target.closest('.notification-bell') && !e.target.closest('.notification-dropdown')) {
-                this.showNotifications = false;
+    mounted() {
+        // Firebase Auth state listener — primary check
+        auth.onAuthStateChanged(async (user) => {
+            if (user && !this.loggedInRider) {
+                // Auth session active hai — localStorage se session restore karo
+                const session = localStorage.getItem('sw_rider_session');
+                if (session) {
+                    try {
+                        this.loggedInRider = JSON.parse(session);
+                        this.loadOrders();
+                        this.loadPerDeliveryRate();
+                        this.loadWithdrawRequests();
+                        database.ref('orders').on('value', () => this.loadOrders());
+                    } catch(e) { localStorage.removeItem('sw_rider_session'); }
+                }
+            } else if (!user) {
+                // Auth session nahi hai — logout state
+                this.loggedInRider = null;
+                localStorage.removeItem('sw_rider_session');
             }
         });
-    },
-    beforeDestroy() {
-        if (this.html5QrCode) { this.html5QrCode.stop().catch(e => console.log(e)); }
     }
 });
 </script>
