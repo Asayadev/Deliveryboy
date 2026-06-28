@@ -220,14 +220,16 @@
                         <div v-if="order.items && order.items.length" class="bg-blue-50/60 p-2.5 rounded-xl">
                             <p class="text-[10px] font-bold text-gray-400 mb-1.5">🛍️ Items:</p>
                             <div class="flex flex-col gap-1.5">
-                                <div v-for="item in order.items" :key="item.id||item.name" class="bg-white border border-blue-100 px-2.5 py-1.5 rounded-lg flex items-center justify-between gap-2">
-                                    <div class="min-w-0">
+                                <div v-for="item in order.items" :key="item.id||item.name" class="bg-white border border-blue-100 px-2.5 py-1.5 rounded-lg">
+                                    <div class="flex items-center justify-between gap-2">
                                         <p class="text-[11px] font-bold text-gray-800 truncate">{{ item.name }}</p>
-                                        <p class="text-[10px] text-indigo-600 font-semibold flex items-center gap-1 mt-0.5">
-                                            <i class="fas fa-store text-[9px]"></i> {{ getSellerForItem(item) }}
-                                        </p>
+                                        <span class="text-blue-600 font-black text-[10px] bg-blue-50 px-1.5 py-0.5 rounded-full flex-shrink-0">x{{ item.quantity }}</span>
                                     </div>
-                                    <span class="text-blue-600 font-black text-[10px] bg-blue-50 px-1.5 py-0.5 rounded-full flex-shrink-0">x{{ item.quantity }}</span>
+                                    <div class="flex items-center gap-1 mt-0.5">
+                                        <span class="bg-indigo-100 text-indigo-700 text-[9px] font-bold px-1.5 py-0.5 rounded-full flex items-center gap-1">
+                                            <i class="fas fa-store text-[8px]"></i> {{ getSellerForItem(item) }}
+                                        </span>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -554,7 +556,15 @@
                         <div><p class="font-bold">Customer: {{ currentInvoiceOrder.customerName }}</p><p class="text-gray-500">{{ currentInvoiceOrder.customerPhone }}</p><p class="text-[10px]">{{ currentInvoiceOrder.customerAddress }}</p></div>
                         <div class="border-t my-2"></div>
                         <p class="font-bold">Items:</p>
-                        <div v-for="item in currentInvoiceOrder.items" class="flex justify-between text-[11px]"><span>{{ item.name }} x{{ item.quantity }}</span><span>₹{{ (item.price * item.quantity).toFixed(2) }}</span></div>
+                        <div v-for="item in currentInvoiceOrder.items" class="text-[11px] py-1 border-b border-dashed border-gray-100 last:border-0">
+                            <div class="flex justify-between">
+                                <span class="font-semibold text-gray-800">{{ item.name }} x{{ item.quantity }}</span>
+                                <span class="font-bold text-green-700">₹{{ (item.price * item.quantity).toFixed(2) }}</span>
+                            </div>
+                            <div class="text-[10px] text-indigo-600 font-semibold mt-0.5 flex items-center gap-1">
+                                <i class="fas fa-store text-[9px]"></i> {{ getSellerForItem(item) }}
+                            </div>
+                        </div>
                         <div class="border-t my-2"></div>
                         <div class="flex justify-between font-bold"><span>Total:</span><span class="text-green-700">₹{{ Number(currentInvoiceOrder.total).toFixed(2) }}</span></div>
                         <div class="text-center text-[9px] text-gray-400 mt-3">Delivered by: {{ loggedInRider.name }}</div>
@@ -859,7 +869,44 @@ new Vue({
                     payload.deliveryBoyDetails = { riderId: this.loggedInRider.id, name: this.loggedInRider.name, phone: this.loggedInRider.phone };
                 }
                 await database.ref(`orders/${order.id}`).update(payload);
-                this.showToast(`✅ Status: ${this.getStatusText(order.status)}`);
+
+                // ✅ Cashback credit karo jab delivered ho
+                if (order.status === 'delivered' && !order.cashbackCredited && Number(order.totalCashbackEarnable) > 0) {
+                    const cashbackAmount = Number(order.totalCashbackEarnable);
+                    let credited = false;
+
+                    // Phone user try karo
+                    if (order.customerPhone) {
+                        const phone = String(order.customerPhone).replace(/\D/g, '');
+                        const userSnap = await database.ref(`users/${phone}`).once('value');
+                        if (userSnap.exists()) {
+                            const userData = userSnap.val();
+                            const currentCashback = Number(userData.cashback || 0);
+                            await database.ref(`users/${phone}`).update({ cashback: currentCashback + cashbackAmount });
+                            credited = true;
+                        }
+                    }
+
+                    // Email user fallback
+                    if (!credited && order.userUid) {
+                        const emailSnap = await database.ref(`users_email/${order.userUid}`).once('value');
+                        if (emailSnap.exists()) {
+                            const userData = emailSnap.val();
+                            const currentCashback = Number(userData.cashback || 0);
+                            await database.ref(`users_email/${order.userUid}`).update({ cashback: currentCashback + cashbackAmount });
+                            credited = true;
+                        }
+                    }
+
+                    if (credited) {
+                        await database.ref(`orders/${order.id}`).update({ cashbackCredited: true });
+                        this.showToast(`✅ Delivered! ₹${cashbackAmount.toFixed(2)} Cashback customer ko mil gaya!`);
+                    } else {
+                        this.showToast(`✅ Status: ${this.getStatusText(order.status)}`);
+                    }
+                } else {
+                    this.showToast(`✅ Status: ${this.getStatusText(order.status)}`);
+                }
             } catch(e) { this.showToast('Error: ' + e.message); }
         },
         
@@ -923,11 +970,58 @@ new Vue({
 
                 const result = await res.json();
                 if (result.success) {
-                    await database.ref(`orders/${this.currentOrderForPhoto.id}`).update({
+                    const order = this.currentOrderForPhoto;
+                    const now = new Date().toISOString();
+
+                    // Photo + status delivered ek saath save karo
+                    await database.ref(`orders/${order.id}`).update({
                         deliveryPhoto: result.data.url,
-                        deliveryPhotoTime: new Date().toISOString()
+                        deliveryPhotoTime: now,
+                        status: 'delivered',
+                        deliveredAt: now,
+                        riderTimestamp: now,
+                        assignedRider: this.loggedInRider.id,
+                        assignedRiderName: this.loggedInRider.name,
+                        assignedRiderPhone: this.loggedInRider.phone,
+                        deliveryBoyDetails: { riderId: this.loggedInRider.id, name: this.loggedInRider.name, phone: this.loggedInRider.phone }
                     });
-                    this.showToast('✅ Proof of delivery saved!');
+
+                    // ✅ Cashback credit karo
+                    if (!order.cashbackCredited && Number(order.totalCashbackEarnable) > 0) {
+                        const cashbackAmount = Number(order.totalCashbackEarnable);
+                        let credited = false;
+
+                        // Phone user try karo
+                        if (order.customerPhone) {
+                            const phone = String(order.customerPhone).replace(/\D/g, '');
+                            const userSnap = await database.ref(`users/${phone}`).once('value');
+                            if (userSnap.exists()) {
+                                const currentCashback = Number(userSnap.val().cashback || 0);
+                                await database.ref(`users/${phone}`).update({ cashback: currentCashback + cashbackAmount });
+                                credited = true;
+                            }
+                        }
+
+                        // Email user fallback
+                        if (!credited && order.userUid) {
+                            const emailSnap = await database.ref(`users_email/${order.userUid}`).once('value');
+                            if (emailSnap.exists()) {
+                                const currentCashback = Number(emailSnap.val().cashback || 0);
+                                await database.ref(`users_email/${order.userUid}`).update({ cashback: currentCashback + cashbackAmount });
+                                credited = true;
+                            }
+                        }
+
+                        if (credited) {
+                            await database.ref(`orders/${order.id}`).update({ cashbackCredited: true });
+                            this.showToast(`✅ Delivered! ₹${cashbackAmount.toFixed(2)} Cashback customer ko mil gaya!`);
+                        } else {
+                            this.showToast('✅ Delivered aur photo save ho gaya!');
+                        }
+                    } else {
+                        this.showToast('✅ Delivered aur photo save ho gaya!');
+                    }
+
                     this.closeCamera();
                     await this.loadOrders();
                 } else {
