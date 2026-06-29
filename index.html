@@ -876,38 +876,52 @@ new Vue({
                 }
                 await database.ref(`orders/${order.id}`).update(payload);
 
-                // ✅ Cashback credit karo jab delivered ho
-                if (order.status === 'delivered' && !order.cashbackCredited && Number(order.totalCashbackEarnable) > 0) {
-                    const cashbackAmount = Number(order.totalCashbackEarnable);
-                    let credited = false;
+                // ✅ Cashback credit karo jab delivered ho (Admin wali same logic)
+                if (order.status === 'delivered' && !order.cashbackCredited) {
+                    try {
+                        let earnAmt = Number(order.totalCashbackEarnable || 0);
 
-                    // Phone user try karo
-                    if (order.customerPhone) {
-                        const phone = String(order.customerPhone).replace(/\D/g, '');
-                        const userSnap = await database.ref(`users/${phone}`).once('value');
-                        if (userSnap.exists()) {
-                            const userData = userSnap.val();
-                            const currentCashback = Number(userData.cashback || 0);
-                            await database.ref(`users/${phone}`).update({ cashback: currentCashback + cashbackAmount });
-                            credited = true;
+                        // Fallback 1: items se calculate karo
+                        if (earnAmt === 0 && order.items && order.items.length) {
+                            earnAmt = order.items.reduce((s, it) => s + Number(it.cashback || 0) * Number(it.quantity || 1), 0);
                         }
-                    }
 
-                    // Email user fallback
-                    if (!credited && order.userUid) {
-                        const emailSnap = await database.ref(`users_email/${order.userUid}`).once('value');
-                        if (emailSnap.exists()) {
-                            const userData = emailSnap.val();
-                            const currentCashback = Number(userData.cashback || 0);
-                            await database.ref(`users_email/${order.userUid}`).update({ cashback: currentCashback + cashbackAmount });
-                            credited = true;
+                        // Fallback 2: Firebase products se lookup karo
+                        if (earnAmt === 0 && order.items && order.items.length) {
+                            const productSnaps = await Promise.all(
+                                order.items.map(it => database.ref('products/' + it.id).once('value'))
+                            );
+                            earnAmt = productSnaps.reduce((s, snap, i) => {
+                                const cb = snap.exists() ? Number(snap.val().cashback || 0) : 0;
+                                return s + cb * Number(order.items[i].quantity || 1);
+                            }, 0);
                         }
-                    }
 
-                    if (credited) {
-                        await database.ref(`orders/${order.id}`).update({ cashbackCredited: true });
-                        this.showToast(`✅ Delivered! ₹${cashbackAmount.toFixed(2)} Cashback customer ko mil gaya!`);
-                    } else {
+                        if (earnAmt > 0) {
+                            const phone = order.customerPhone;
+                            const uid = order.uid; // ✅ 'uid' hai, 'userUid' nahi
+
+                            let cashbackPath = null;
+                            if (phone) {
+                                const profileSnap = await database.ref(`users/${phone}`).once('value');
+                                if (profileSnap.exists()) cashbackPath = `users/${phone}/cashback`;
+                            }
+                            if (!cashbackPath && uid) cashbackPath = `users_email/${uid}/cashback`;
+                            if (!cashbackPath && phone) cashbackPath = `users/${phone}/cashback`;
+
+                            if (cashbackPath) {
+                                const curSnap = await database.ref(cashbackPath).once('value');
+                                const newBal = Number(curSnap.val() || 0) + earnAmt;
+                                await database.ref(cashbackPath).set(newBal);
+                                await database.ref(`orders/${order.id}`).update({ cashbackCredited: true, totalCashbackEarnable: earnAmt });
+                                this.showToast(`✅ Delivered! ₹${earnAmt.toFixed(2)} Cashback wallet me add ho gaya!`);
+                            } else {
+                                this.showToast(`✅ Status: ${this.getStatusText(order.status)}`);
+                            }
+                        } else {
+                            this.showToast(`✅ Status: ${this.getStatusText(order.status)}`);
+                        }
+                    } catch(ce) {
                         this.showToast(`✅ Status: ${this.getStatusText(order.status)}`);
                     }
                 } else {
@@ -992,37 +1006,56 @@ new Vue({
                         deliveryBoyDetails: { riderId: this.loggedInRider.id, name: this.loggedInRider.name, phone: this.loggedInRider.phone }
                     });
 
-                    // ✅ Cashback credit karo
-                    if (!order.cashbackCredited && Number(order.totalCashbackEarnable) > 0) {
-                        const cashbackAmount = Number(order.totalCashbackEarnable);
-                        let credited = false;
+                    // ✅ Cashback credit karo (Admin wali same logic)
+                    if (!order.cashbackCredited) {
+                        try {
+                            let earnAmt = Number(order.totalCashbackEarnable || 0);
 
-                        // Phone user try karo
-                        if (order.customerPhone) {
-                            const phone = String(order.customerPhone).replace(/\D/g, '');
-                            const userSnap = await database.ref(`users/${phone}`).once('value');
-                            if (userSnap.exists()) {
-                                const currentCashback = Number(userSnap.val().cashback || 0);
-                                await database.ref(`users/${phone}`).update({ cashback: currentCashback + cashbackAmount });
-                                credited = true;
+                            // Fallback 1: items ke andar cashback field se calculate karo
+                            if (earnAmt === 0 && order.items && order.items.length) {
+                                earnAmt = order.items.reduce((s, it) => s + Number(it.cashback || 0) * Number(it.quantity || 1), 0);
                             }
-                        }
 
-                        // Email user fallback
-                        if (!credited && order.userUid) {
-                            const emailSnap = await database.ref(`users_email/${order.userUid}`).once('value');
-                            if (emailSnap.exists()) {
-                                const currentCashback = Number(emailSnap.val().cashback || 0);
-                                await database.ref(`users_email/${order.userUid}`).update({ cashback: currentCashback + cashbackAmount });
-                                credited = true;
+                            // Fallback 2: Firebase se products ki cashback lookup karo
+                            if (earnAmt === 0 && order.items && order.items.length) {
+                                const productSnaps = await Promise.all(
+                                    order.items.map(it => database.ref('products/' + it.id).once('value'))
+                                );
+                                earnAmt = productSnaps.reduce((s, snap, i) => {
+                                    const cb = snap.exists() ? Number(snap.val().cashback || 0) : 0;
+                                    return s + cb * Number(order.items[i].quantity || 1);
+                                }, 0);
                             }
-                        }
 
-                        if (credited) {
-                            await database.ref(`orders/${order.id}`).update({ cashbackCredited: true });
-                            this.showToast(`✅ Delivered! ₹${cashbackAmount.toFixed(2)} Cashback customer ko mil gaya!`);
-                        } else {
-                            this.showToast('✅ Delivered aur photo save ho gaya!');
+                            if (earnAmt > 0) {
+                                const phone = order.customerPhone;
+                                const uid = order.uid; // ✅ 'uid' hai, 'userUid' nahi
+
+                                // Phone user check karo pehle
+                                let cashbackPath = null;
+                                if (phone) {
+                                    const profileSnap = await database.ref(`users/${phone}`).once('value');
+                                    if (profileSnap.exists()) cashbackPath = `users/${phone}/cashback`;
+                                }
+                                // Email user fallback
+                                if (!cashbackPath && uid) cashbackPath = `users_email/${uid}/cashback`;
+                                // Last fallback: phone path
+                                if (!cashbackPath && phone) cashbackPath = `users/${phone}/cashback`;
+
+                                if (cashbackPath) {
+                                    const curSnap = await database.ref(cashbackPath).once('value');
+                                    const newBal = Number(curSnap.val() || 0) + earnAmt;
+                                    await database.ref(cashbackPath).set(newBal);
+                                    await database.ref(`orders/${order.id}`).update({ cashbackCredited: true, totalCashbackEarnable: earnAmt });
+                                    this.showToast(`✅ Delivered! ₹${earnAmt.toFixed(2)} Cashback customer wallet me add ho gaya!`);
+                                } else {
+                                    this.showToast('✅ Delivered aur photo save ho gaya!');
+                                }
+                            } else {
+                                this.showToast('✅ Delivered aur photo save ho gaya!');
+                            }
+                        } catch(ce) {
+                            this.showToast('✅ Delivered! (Cashback error: ' + ce.message + ')');
                         }
                     } else {
                         this.showToast('✅ Delivered aur photo save ho gaya!');
