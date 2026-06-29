@@ -737,6 +737,23 @@ new Vue({
             this.authLoading = true;
 
             try {
+                // Pehle Firebase Auth se login karo (email+password) — Firebase rules satisfy hongi
+                let userCredential;
+                try {
+                    userCredential = await auth.signInWithEmailAndPassword(
+                        this.loginForm.email.trim(),
+                        this.loginForm.password
+                    );
+                } catch(authErr) {
+                    // Firebase Auth fail hua — anonymous se try karo (sirf DB check ke liye)
+                    try {
+                        await auth.signInAnonymously();
+                    } catch(anonErr) {
+                        // Anonymous bhi fail — do nothing, try karte hain
+                    }
+                }
+
+                // Ab riders database se check karo
                 const snap = await database.ref('riders').once('value');
                 let matched = null;
                 snap.forEach(c => {
@@ -747,12 +764,15 @@ new Vue({
                         matched = { id: c.key, name: v.name, phone: v.phone || '', email: v.email };
                     }
                 });
+
                 this.authLoading = false;
                 if (matched) {
                     this.loggedInRider = matched;
                     localStorage.setItem('sw_rider_session', JSON.stringify(matched));
                     this.initRiderPanel();
                 } else {
+                    // Galat credentials — sign out karo
+                    auth.signOut().catch(() => {});
                     this.loginError = 'Email ya Password galat hai! Admin se check karein.';
                 }
             } catch(e) {
