@@ -310,22 +310,34 @@
 
                         <!-- ✅ UNLOCKED STATE — Normal status change (only shown when NO lock) -->
                         <div v-else class="flex gap-2 mt-1">
-                            <select v-model="order.status" @change="mutateOrderStatus(order)" class="flex-1 border rounded-xl px-3 py-2 text-xs font-bold bg-white" :disabled="order.status === 'cancelled'">
-                                <option value="pending">⏳ Pending</option>
-                                <option value="confirmed">✅ Order Confirmed</option>
-                                <option value="shipped">🚚 Out for Delivery</option>
-                                <option value="delivered">🏠 Delivered</option>
-                                <option value="cancelled">❌ Cancelled</option>
-                            </select>
-                            <!-- Photo Capture Button (only for delivered) -->
-                            <button v-if="order.status === 'delivered' && !order.deliveryPhoto" @click="openCameraForOrder(order)" class="bg-purple-600 text-white px-3 rounded-xl text-[10px] font-bold">
-                                <i class="fas fa-camera"></i>
-                            </button>
-                            <span v-if="order.deliveryPhoto" class="bg-green-100 text-green-700 px-3 py-2 rounded-xl text-[10px] font-bold"><i class="fas fa-check-circle"></i> Photo</span>
-                            <!-- Cancel Button -->
-                            <button v-if="order.status !== 'delivered' && order.status !== 'cancelled'" @click="cancelOrder(order)" class="bg-red-100 text-red-700 hover:bg-red-200 px-3 rounded-xl text-[10px] font-bold">
-                                <i class="fas fa-times"></i>
-                            </button>
+
+                            <!-- 🔒 DELIVERED — Lock ho gaya, change nahi ho sakta -->
+                            <div v-if="order.status === 'delivered'" class="flex-1 flex items-center gap-2">
+                                <div class="flex-1 border-2 border-green-400 rounded-xl px-3 py-2 text-xs font-bold bg-green-50 text-green-700 flex items-center gap-2 cursor-not-allowed select-none">
+                                    <i class="fas fa-lock text-green-500"></i>
+                                    <span>🏠 Delivered — Final</span>
+                                </div>
+                                <span v-if="order.deliveryPhoto" class="bg-green-100 text-green-700 px-3 py-2 rounded-xl text-[10px] font-bold"><i class="fas fa-check-circle"></i> Photo</span>
+                            </div>
+
+                            <!-- Normal dropdown (only for non-delivered orders) -->
+                            <template v-else>
+                                <select v-model="order.status" @change="mutateOrderStatus(order)" class="flex-1 border rounded-xl px-3 py-2 text-xs font-bold bg-white" :disabled="order.status === 'cancelled'">
+                                    <option value="pending">⏳ Pending</option>
+                                    <option value="confirmed">✅ Order Confirmed</option>
+                                    <option value="shipped">🚚 Out for Delivery</option>
+                                    <option value="delivered">🏠 Delivered</option>
+                                    <option value="cancelled">❌ Cancelled</option>
+                                </select>
+                                <!-- Photo Capture Button (only for delivered) -->
+                                <button v-if="order.status === 'delivered' && !order.deliveryPhoto" @click="openCameraForOrder(order)" class="bg-purple-600 text-white px-3 rounded-xl text-[10px] font-bold">
+                                    <i class="fas fa-camera"></i>
+                                </button>
+                                <!-- Cancel Button -->
+                                <button v-if="order.status !== 'cancelled'" @click="cancelOrder(order)" class="bg-red-100 text-red-700 hover:bg-red-200 px-3 rounded-xl text-[10px] font-bold">
+                                    <i class="fas fa-times"></i>
+                                </button>
+                            </template>
                         </div>
                     </div>
                 </div>
@@ -716,7 +728,7 @@ new Vue({
             database.ref('orders').on('value', () => this.loadOrders());
         },
 
-        handleRiderLogin() {
+        async handleRiderLogin() {
             if (!this.loginForm.email || !this.loginForm.password) {
                 this.loginError = 'Email aur password dono zaroori hain';
                 return;
@@ -724,35 +736,29 @@ new Vue({
             this.loginError = '';
             this.authLoading = true;
 
-            auth.signInWithEmailAndPassword(this.loginForm.email.trim(), this.loginForm.password)
-                .then(async (userCredential) => {
-                    const user = userCredential.user;
-                    const snap = await database.ref('riders').once('value');
-                    let matched = null;
-                    snap.forEach(c => {
-                        const v = c.val();
-                        if (v.email && v.email.toLowerCase() === user.email.toLowerCase()) {
-                            matched = { id: c.key, name: v.name, phone: v.phone || '', email: v.email };
-                        }
-                    });
-                    this.authLoading = false;
-                    if (matched) {
-                        this.loggedInRider = matched;
-                        localStorage.setItem('sw_rider_session', JSON.stringify(matched));
-                        this.initRiderPanel();
-                    } else {
-                        auth.signOut();
-                        this.loginError = 'Aapka rider account nahi mila. Admin se contact karein.';
-                    }
-                })
-                .catch((error) => {
-                    this.authLoading = false;
-                    if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
-                        this.loginError = 'Email ya Password galat hai!';
-                    } else {
-                        this.loginError = error.message;
+            try {
+                const snap = await database.ref('riders').once('value');
+                let matched = null;
+                snap.forEach(c => {
+                    const v = c.val();
+                    const emailMatch = v.email && v.email.toLowerCase().trim() === this.loginForm.email.toLowerCase().trim();
+                    const passMatch = v.password && v.password === this.loginForm.password;
+                    if (emailMatch && passMatch) {
+                        matched = { id: c.key, name: v.name, phone: v.phone || '', email: v.email };
                     }
                 });
+                this.authLoading = false;
+                if (matched) {
+                    this.loggedInRider = matched;
+                    localStorage.setItem('sw_rider_session', JSON.stringify(matched));
+                    this.initRiderPanel();
+                } else {
+                    this.loginError = 'Email ya Password galat hai! Admin se check karein.';
+                }
+            } catch(e) {
+                this.authLoading = false;
+                this.loginError = 'Login error: ' + e.message;
+            }
         },
         
         async loadShopkeepers() {
