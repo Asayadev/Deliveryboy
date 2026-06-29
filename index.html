@@ -378,8 +378,8 @@
                 <p class="text-[10px] opacity-80 uppercase tracking-wide font-bold">🏦 Available Balance</p>
                 <p class="text-4xl font-black mt-1">₹{{ totalEarnings.toFixed(2) }}</p>
                 <div class="mt-3 pt-3 border-t border-white/20 flex justify-between text-[11px]">
-                    <span class="opacity-80">Total Earned: ₹{{ totalGrossEarnings.toFixed(2) }}</span>
-                    <span class="opacity-80">Deducted (Withdrawn/Pending): ₹{{ (totalWithdrawn + totalPending).toFixed(2) }}</span>
+                    <span class="opacity-80 flex items-center gap-1"><i class="fas fa-database text-[9px]"></i> Live from Firebase wallet</span>
+                    <span class="opacity-80">Withdrawn: ₹{{ totalWithdrawn.toFixed(2) }}</span>
                 </div>
                 <div v-if="totalPending > 0" class="mt-1.5 text-[10px] text-yellow-200 flex items-center gap-1.5">
                     <i class="fas fa-clock"></i>
@@ -628,6 +628,7 @@ new Vue({
         orderStatusFilter: 'all',
         
         perDeliveryRate: 40,
+        riderBalance: 0,
         
         showScanner: false,
         html5QrCode: null,
@@ -698,8 +699,8 @@ new Vue({
             return this.deliveredOrders.length * this.perDeliveryRate;
         },
         totalEarnings() {
-            // Balance logic fix: Total me se Pending aur Approved dono minus honge, taaki request bhejte hi cut jaye aur double deduction na ho.
-            return Math.max(0, this.totalGrossEarnings - this.totalWithdrawn - this.totalPending);
+            // ✅ WALLET FIX: Firebase riders/{id}/balance se live balance lena — order count se calculate nahi
+            return Math.max(0, this.riderBalance);
         },
         todayDeliveredCount() {
             const today = new Date().toDateString();
@@ -722,6 +723,7 @@ new Vue({
             this.loadShopkeepers();
             this.loadPerDeliveryRate();
             this.loadWithdrawRequests();
+            this.loadRiderBalance();
             
             // Firebase single unique reference listeners attach
             database.ref('orders').off(); // Pehle se chal rahe duplicate listener ko band karne ke liye
@@ -843,22 +845,37 @@ new Vue({
             });
         },
 
+        loadRiderBalance() {
+            if (!this.loggedInRider) return;
+            const balRef = database.ref(`riders/${this.loggedInRider.id}/balance`);
+            balRef.off();
+            balRef.on('value', snap => {
+                this.riderBalance = snap.exists() ? Number(snap.val()) : 0;
+            });
+        },
+
         async submitWithdrawRequest() {
             if (!this.withdrawAmount || parseFloat(this.withdrawAmount) <= 0) { this.showToast('Valid amount enter karein'); return; }
             if (!this.withdrawUPI.trim()) { this.showToast('UPI ID required hai'); return; }
-            if (parseFloat(this.withdrawAmount) > this.totalEarnings) { this.showToast('Amount available balance se zyada hai'); return; }
+            if (parseFloat(this.withdrawAmount) > this.riderBalance) { this.showToast('Amount available balance se zyada hai'); return; }
             this.withdrawLoading = true;
+            const amt = parseFloat(this.withdrawAmount);
             try {
+                // ✅ WALLET FIX: Pehle Firebase balance se turant deduct karo
+                const balRef = database.ref(`riders/${this.loggedInRider.id}/balance`);
+                await balRef.transaction(cur => Math.max(0, (Number(cur) || 0) - amt));
+
+                // Phir withdrawal request record karo
                 await database.ref('withdrawal_requests').push({
                     riderId: this.loggedInRider.id,
                     riderName: this.loggedInRider.name,
                     riderPhone: this.loggedInRider.phone,
-                    amount: parseFloat(this.withdrawAmount),
+                    amount: amt,
                     upiId: this.withdrawUPI.trim(),
                     status: 'pending',
                     requestedAt: new Date().toISOString()
                 });
-                this.showToast('✅ Withdraw request bhej diya! Balance turant update ho gaya.');
+                this.showToast('✅ Withdraw request bhej diya! Balance turant cut ho gaya.');
                 this.showWithdrawModal = false;
                 this.withdrawAmount = '';
                 this.withdrawUPI = '';
@@ -895,6 +912,15 @@ new Vue({
                     payload.deliveryBoyDetails = { riderId: this.loggedInRider.id, name: this.loggedInRider.name, phone: this.loggedInRider.phone };
                 }
                 await database.ref(`orders/${order.id}`).update(payload);
+
+                // ✅ WALLET FIX: Rider earning credit — sirf ek baar (earningCredited flag check)
+                if (order.status === 'delivered' && !order.earningCredited) {
+                    try {
+                        const balRef = database.ref(`riders/${this.loggedInRider.id}/balance`);
+                        await balRef.transaction(cur => (Number(cur) || 0) + this.perDeliveryRate);
+                        await database.ref(`orders/${order.id}`).update({ earningCredited: true });
+                    } catch(we) { /* balance credit silently fail, order status already saved */ }
+                }
 
                 // ✅ Cashback credit karo jab delivered ho (Admin wali same logic)
                 if (order.status === 'delivered' && !order.cashbackCredited) {
@@ -1025,6 +1051,15 @@ new Vue({
                         assignedRiderPhone: this.loggedInRider.phone,
                         deliveryBoyDetails: { riderId: this.loggedInRider.id, name: this.loggedInRider.name, phone: this.loggedInRider.phone }
                     });
+
+                    // ✅ WALLET FIX: Rider earning credit via photo delivery (earningCredited flag check)
+                    if (!order.earningCredited) {
+                        try {
+                            const balRef = database.ref(`riders/${this.loggedInRider.id}/balance`);
+                            await balRef.transaction(cur => (Number(cur) || 0) + this.perDeliveryRate);
+                            await database.ref(`orders/${order.id}`).update({ earningCredited: true });
+                        } catch(we) { /* silent — photo already saved */ }
+                    }
 
                     // ✅ Cashback credit karo (Admin wali same logic)
                     if (!order.cashbackCredited) {
@@ -1170,7 +1205,11 @@ new Vue({
                 database.ref('orders').off();
                 database.ref('admin_settings/per_delivery_rate').off();
                 database.ref('withdrawal_requests').off();
+                if (this.loggedInRider) {
+                    database.ref(`riders/${this.loggedInRider.id}/balance`).off();
+                }
                 this.loggedInRider = null;
+                this.riderBalance = 0;
                 localStorage.removeItem('sw_rider_session');
                 this.loginForm = { email: '', password: '' };
                 this.orders = [];
